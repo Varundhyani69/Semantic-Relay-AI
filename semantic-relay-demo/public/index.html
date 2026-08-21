@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>semantic-relay benchmark</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main class="shell">
+      <section class="toolbar" aria-label="Benchmark controls">
+        <div>
+          <p class="eyebrow">Express pagination benchmark</p>
+          <h1>semantic-relay demo</h1>
+        </div>
+
+        <div class="controls">
+          <label>
+            Requests
+            <input id="requestCount" type="range" min="4" max="16" value="10">
+            <span id="requestCountValue">10</span>
+          </label>
+
+          <label>
+            Page size
+            <input id="pageSize" type="range" min="6" max="24" value="12">
+            <span id="pageSizeValue">12</span>
+          </label>
+
+          <label>
+            Category
+            <select id="category">
+              <option value="">All</option>
+              <option value="hardware">Hardware</option>
+              <option value="apparel">Apparel</option>
+              <option value="books">Books</option>
+              <option value="kitchen">Kitchen</option>
+            </select>
+          </label>
+
+          <button id="runBenchmark" type="button">Run benchmark</button>
+        </div>
+      </section>
+
+      <section class="scoreboard" aria-label="Benchmark results">
+        <article class="result-panel raw">
+          <div class="panel-heading">
+            <span class="badge">Baseline</span>
+            <h2>Raw Express</h2>
+          </div>
+          <div class="stat-grid">
+            <div>
+              <span>Time</span>
+              <strong id="rawTime">-</strong>
+            </div>
+            <div>
+              <span>DB calls</span>
+              <strong id="rawCalls">-</strong>
+            </div>
+            <div>
+              <span>Items</span>
+              <strong id="rawItems">-</strong>
+            </div>
+          </div>
+          <div class="bar-track">
+            <div id="rawBar" class="bar"></div>
+          </div>
+        </article>
+
+        <article class="result-panel batch">
+          <div class="panel-heading">
+            <span class="badge">Transport</span>
+            <h2>Batch API</h2>
+          </div>
+          <div class="stat-grid">
+            <div>
+              <span>Time</span>
+              <strong id="batchTime">-</strong>
+            </div>
+            <div>
+              <span>DB calls</span>
+              <strong id="batchCalls">-</strong>
+            </div>
+            <div>
+              <span>Saved</span>
+              <strong id="batchSavedCalls">-</strong>
+            </div>
+          </div>
+          <div class="bar-track">
+            <div id="batchBar" class="bar"></div>
+          </div>
+        </article>
+
+        <article class="result-panel semantic-batch">
+          <div class="panel-heading">
+            <span class="badge">Semantic</span>
+            <h2>Semantic Batch</h2>
+          </div>
+          <div class="stat-grid">
+            <div>
+              <span>Time</span>
+              <strong id="semanticBatchTime">-</strong>
+            </div>
+            <div>
+              <span>DB calls</span>
+              <strong id="semanticBatchCalls">-</strong>
+            </div>
+            <div>
+              <span>Saved</span>
+              <strong id="semanticBatchSavedCalls">-</strong>
+            </div>
+          </div>
+          <div class="bar-track">
+            <div id="semanticBatchBar" class="bar"></div>
+          </div>
+        </article>
+
+        <article class="result-panel relay">
+          <div class="panel-heading">
+            <span class="badge">Grouped</span>
+            <h2>semantic-relay</h2>
+          </div>
+          <div class="stat-grid">
+            <div>
+              <span>Time</span>
+              <strong id="relayTime">-</strong>
+            </div>
+            <div>
+              <span>DB calls</span>
+              <strong id="relayCalls">-</strong>
+            </div>
+            <div>
+              <span>Saved</span>
+              <strong id="relaySavedCalls">-</strong>
+            </div>
+          </div>
+          <div class="bar-track">
+            <div id="relayBar" class="bar"></div>
+          </div>
+        </article>
+      </section>
+
+      <section class="insights">
+        <div class="summary">
+          <h2>Run Summary</h2>
+          <p id="summaryText">Run the benchmark to compare raw requests, transport batching, semantic batch, and transparent semantic-relay.</p>
+        </div>
+
+        <div class="timeline">
+          <h2>Request Shape</h2>
+          <div id="pageStrip" class="page-strip"></div>
+        </div>
+      </section>
+
+      <section class="data-view">
+        <div>
+          <h2>Sample Relay Payload</h2>
+          <p>semantic-relay preserves normal paginated request responses while reducing backend database calls.</p>
+        </div>
+        <div id="productGrid" class="product-grid"></div>
+      </section>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

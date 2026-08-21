@@ -1,0 +1,5 @@
+
+> semantic-relay-demo@1.0.0 start
+> node server.js
+
+semantic-relay demo running at http://localhost:3100
