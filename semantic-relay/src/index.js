@@ -5,6 +5,12 @@ const partitioner = require('./partitioner');
 const scorer = require('./scorer');
 const MemoryWindow = require('./adapters/memory-window');
 
+// Optional AI layer — loads only when available
+let SemanticPlanner = null;
+try {
+  SemanticPlanner = require('./ai/planner');
+} catch (_) { /* AI layer not installed — safe mode will be used */ }
+
 function extractResultsArray(data) {
   if (Array.isArray(data)) return data;
 
@@ -179,7 +185,9 @@ function semanticRelay(options = {}) {
     routes = {},
     onAggregate = () => { },
     onFallback = () => { },
-    window: windowAdapter = new MemoryWindow()
+    window: windowAdapter = new MemoryWindow(),
+    aiMode = 'adaptive',
+    aiOptions = {}
   } = options;
 
   let totalRequests = 0;
@@ -205,6 +213,26 @@ function semanticRelay(options = {}) {
     maxPageGap,
     window: windowAdapter
   });
+
+  // Instantiate AI planner if available and not in safe mode
+  let planner = null;
+  if (SemanticPlanner && aiMode !== 'safe') {
+    try {
+      planner = new SemanticPlanner({
+        cohereApiKey: aiOptions.cohereApiKey || process.env.COHERE_API_KEY,
+        geminiApiKey: aiOptions.geminiApiKey || process.env.GEMINI_API_KEY,
+        embeddingThreshold: aiOptions.embeddingThreshold || 0.85,
+        reasoningThreshold: aiOptions.reasoningThreshold || 0.6,
+        maxPatternCacheSize: aiOptions.maxPatternCacheSize || 500,
+        minConfidence: aiOptions.minConfidence || 0.7,
+        maxSupersetLimit,
+        aiMode,
+        knownRoutes: routes
+      });
+    } catch (err) {
+      // planner stays null — middleware continues in deterministic mode
+    }
+  }
 
   const routeEntries = Object.keys(routes)
     .sort((a, b) => b.length - a.length)
@@ -262,10 +290,32 @@ function semanticRelay(options = {}) {
     ctx.next();
   }
 
-  function handleAggregatedGroup(groupContexts) {
+  async function handleAggregatedGroup(groupContexts) {
     if (groupContexts.length === 1) {
       handleSolo(groupContexts[0], 'solo');
       return;
+    }
+
+    // AI-assisted merge for exactly-2-request groups with ambiguous deterministic score
+    if (planner && groupContexts.length === 2) {
+      const scoreAB = scorer(groupContexts[0].intent, groupContexts[1].intent);
+      if (scoreAB > 0 && scoreAB < threshold) {
+        try {
+          const planResult = await planner.evaluate(
+            groupContexts[0].intent,
+            groupContexts[1].intent
+          );
+          if (planResult.decision === 'merge' && planResult.canonicalFilter) {
+            // Patch canonical filter so supersetBuilder uses the AI-resolved filter
+            groupContexts[0].intent.filters = planResult.canonicalFilter;
+            groupContexts[1].intent.filters = planResult.canonicalFilter;
+          } else if (planResult.decision === 'split') {
+            for (const ctx of groupContexts) handleSolo(ctx, 'ai-split');
+            return;
+          }
+          // decision === 'fallback' → fall through to existing deterministic path
+        } catch (_) { /* planner error → continue deterministic */ }
+      }
     }
 
     const guardedGroups = splitByGuardrails(groupContexts, {
@@ -617,9 +667,26 @@ function semanticRelay(options = {}) {
       guardrailSplits,
       cacheHits,
       cacheMisses,
-      cacheEntries: responseCache.size
+      cacheEntries: responseCache.size,
+      // AI layer fields — zeroed when planner is not active
+      ...(planner ? planner.getStats() : {
+        aiInvocations: 0,
+        embeddingInvocations: 0,
+        reasoningInvocations: 0,
+        validatorApprovals: 0,
+        validatorRejects: 0,
+        patternCacheHits: 0,
+        patternCacheMisses: 0,
+        avgEmbeddingMs: 0,
+        avgReasoningMs: 0,
+        aiStatus: SemanticPlanner ? 'disabled' : 'not-installed',
+        estimatedCostUsd: 0
+      })
     };
   };
+
+  // Expose planner so demo server can wire the onDecision callback
+  middleware.getPlanner = () => planner;
 
   return middleware;
 }
