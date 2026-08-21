@@ -26,20 +26,26 @@ class WindowManager {
 
   add(ctx) {
     const resourceKey = this.resourceKey(ctx.intent);
+    console.log(`[WINDOW] Adding request to window ${resourceKey} at ${Date.now()}`);
     this.storage.add(resourceKey, ctx);
 
     if (!this.timers.has(resourceKey)) {
+      console.log(`[WINDOW] Starting new window timer for ${resourceKey} - will flush in ${this.windowMs}ms`);
       const timer = setTimeout(() => {
+        console.log(`[WINDOW] Window ${resourceKey} expired - flushing...`);
         this.timers.delete(resourceKey);
         this.flushResource(resourceKey);
       }, this.windowMs);
       this.timers.set(resourceKey, timer);
+    } else {
+      console.log(`[WINDOW] Request added to existing window ${resourceKey}`);
     }
 
     if (this.shouldEarlyFlush(resourceKey)) {
       const timer = this.timers.get(resourceKey);
       if (timer) clearTimeout(timer);
       this.timers.delete(resourceKey);
+      console.log(`[WINDOW] Early flush triggered for ${resourceKey}`);
       this.flushResource(resourceKey);
     }
   }
@@ -65,8 +71,7 @@ class WindowManager {
     return [
       'auto',
       intent.resource,
-      intent.limit,
-      stableStringify(intent.filters)
+      intent.limit
     ].join('|');
   }
 
@@ -123,9 +128,11 @@ class WindowManager {
 
   async flushResource(resourceKey) {
     const contexts = await this.storage.flush(resourceKey);
+    console.log(`[WINDOW] Flushing ${resourceKey} with ${contexts?.length || 0} requests`);
     if (!contexts || contexts.length === 0) return;
 
     const groups = this.groupContexts(contexts);
+    console.log(`[WINDOW] Grouped ${contexts.length} requests into ${groups.length} groups`);
 
     if (this.onFlushCallback) {
       groups.forEach(group => this.onFlushCallback(group));

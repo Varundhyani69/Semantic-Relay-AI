@@ -48,7 +48,7 @@ function groupBySimilarity(contexts, threshold) {
     const intent = ctx.intent;
     const key = intent.groupKey
       ? `hint:${intent.groupKey}`
-      : ['auto', intent.resource, intent.limit, stableStringify(intent.filters)].join('|');
+      : ['auto', intent.resource, intent.limit].join('|');
     if (!buckets.has(key)) buckets.set(key, []);
     buckets.get(key).push(ctx);
   }
@@ -205,6 +205,20 @@ function semanticRelay(options = {}) {
   let cacheMisses = 0;
   const responseCache = new Map();
 
+  // Decision log for debugging and visualization
+  const decisionLog = [];
+  const MAX_DECISION_LOG = 100;
+
+  function logDecision(entry) {
+    decisionLog.unshift({
+      timestamp: Date.now(),
+      ...entry
+    });
+    if (decisionLog.length > MAX_DECISION_LOG) {
+      decisionLog.pop();
+    }
+  }
+
   const wm = new WindowManager({
     windowMs,
     threshold,
@@ -275,6 +289,14 @@ function semanticRelay(options = {}) {
 
   function handleSolo(ctx, reason) {
     soloRequests++;
+    logDecision({
+      type: 'solo',
+      reason,
+      resource: ctx.intent?.resource,
+      filters: ctx.intent?.filters,
+      page: ctx.intent?.page,
+      limit: ctx.intent?.limit
+    });
     ctx.req.semanticRelay = {
       aggregated: false,
       groupSize: 1,
@@ -291,30 +313,127 @@ function semanticRelay(options = {}) {
   }
 
   async function handleAggregatedGroup(groupContexts) {
+    console.log('[DEBUG] handleAggregatedGroup called with', groupContexts.length, 'requests');
     if (groupContexts.length === 1) {
       handleSolo(groupContexts[0], 'solo');
       return;
     }
 
-    // AI-assisted merge for exactly-2-request groups with ambiguous deterministic score
-    if (planner && groupContexts.length === 2) {
-      const scoreAB = scorer(groupContexts[0].intent, groupContexts[1].intent);
-      if (scoreAB > 0 && scoreAB < threshold) {
-        try {
-          const planResult = await planner.evaluate(
-            groupContexts[0].intent,
-            groupContexts[1].intent
-          );
-          if (planResult.decision === 'merge' && planResult.canonicalFilter) {
-            // Patch canonical filter so supersetBuilder uses the AI-resolved filter
-            groupContexts[0].intent.filters = planResult.canonicalFilter;
-            groupContexts[1].intent.filters = planResult.canonicalFilter;
-          } else if (planResult.decision === 'split') {
-            for (const ctx of groupContexts) handleSolo(ctx, 'ai-split');
-            return;
+    // AI-assisted merge for groups with ambiguous semantic similarity
+    // For groups of any size, evaluate pairwise comparisons to find semantic equivalences
+    // Ambiguous = score is close to threshold but above it (barely passing)
+    // AND filters are different (semantic ambiguity, not just page difference)
+    const AI_AMBIGUITY_RANGE = 0.15;  // Score within 0.15 above threshold is ambiguous
+    if (planner && groupContexts.length >= 2) {
+      // For groups larger than 2, check if there are any ambiguous pairs
+      // that would benefit from AI evaluation
+      let hasAmbiguousPairs = false;
+      let canonicalFilterResolved = null;
+
+      // Collect unique filter structures in the group
+      const uniqueFilters = new Map();
+      for (const ctx of groupContexts) {
+        const filterStr = stableStringify(ctx.intent.filters);
+        if (!uniqueFilters.has(filterStr)) {
+          uniqueFilters.set(filterStr, ctx.intent.filters);
+        }
+      }
+
+      // If all filters are identical, no AI needed (deterministic handles it)
+      if (uniqueFilters.size === 1) {
+        console.log('[DEBUG] AI Check: All filters identical, skipping AI (deterministic)');
+      } else {
+        // Check first distinct pair for ambiguity (representative sample)
+        const filterArray = Array.from(uniqueFilters.values());
+        const intentA = { ...groupContexts[0].intent, filters: filterArray[0] };
+        const intentB = { ...groupContexts[0].intent, filters: filterArray[1] };
+        const scoreAB = scorer(intentA, intentB);
+        const filtersDiffer = true; // Already confirmed by uniqueFilters.size > 1
+        const isAmbiguous = filtersDiffer && scoreAB >= threshold && scoreAB < (threshold + AI_AMBIGUITY_RANGE);
+
+        console.log('[DEBUG] AI Check:', {
+          groupSize: groupContexts.length,
+          uniqueFilters: uniqueFilters.size,
+          scoreAB,
+          threshold,
+          ambiguityRange: `${threshold} - ${threshold + AI_AMBIGUITY_RANGE}`,
+          filtersDiffer,
+          willTriggerAI: isAmbiguous,
+          sampleFiltersA: filterArray[0],
+          sampleFiltersB: filterArray[1]
+        });
+
+        logDecision({
+          type: 'deterministic-check',
+          groupSize: groupContexts.length,
+          uniqueFilters: uniqueFilters.size,
+          score: scoreAB,
+          threshold,
+          resource: groupContexts[0].intent?.resource,
+          willTriggerAI: isAmbiguous
+        });
+
+        if (isAmbiguous) {
+          console.log(`[DEBUG] TRIGGERING AI for group of ${groupContexts.length} with ${uniqueFilters.size} filter variants...`);
+          hasAmbiguousPairs = true;
+
+          logDecision({
+            type: 'ai-trigger',
+            resource: groupContexts[0].intent?.resource,
+            groupSize: groupContexts.length,
+            uniqueFilters: uniqueFilters.size,
+            deterministicScore: scoreAB
+          });
+
+          try {
+            // Evaluate representative pair from the group
+            const planResult = await planner.evaluate(intentA, intentB);
+            console.log('[DEBUG] AI Result:', planResult);
+
+            logDecision({
+              type: 'ai-result',
+              decision: planResult.decision,
+              confidence: planResult.confidence,
+              source: planResult.source,
+              canonicalFilter: planResult.canonicalFilter,
+              latencyMs: planResult.latencyMs
+            });
+
+            if (planResult.decision === 'merge' && planResult.canonicalFilter) {
+              // Apply canonical filter to ALL requests in the group
+              canonicalFilterResolved = planResult.canonicalFilter;
+              for (const ctx of groupContexts) {
+                ctx.intent.filters = canonicalFilterResolved;
+              }
+              console.log(`[DEBUG] Applied canonical filter to all ${groupContexts.length} requests`);
+            } else if (planResult.decision === 'split') {
+              logDecision({
+                type: 'ai-split',
+                resource: groupContexts[0].intent?.resource,
+                groupSize: groupContexts.length
+              });
+              for (const ctx of groupContexts) handleSolo(ctx, 'ai-split');
+              return;
+            }
+            // decision === 'fallback' → fall through to existing deterministic path
+          } catch (err) {
+            console.log('[DEBUG] AI Error:', err.message);
+            logDecision({
+              type: 'ai-error',
+              error: err.message
+            });
+            /* planner error → continue deterministic */
           }
-          // decision === 'fallback' → fall through to existing deterministic path
-        } catch (_) { /* planner error → continue deterministic */ }
+        } else if (scoreAB >= threshold) {
+          logDecision({
+            type: 'deterministic-handled',
+            outcome: 'above-threshold',
+            score: scoreAB,
+            threshold,
+            resource: groupContexts[0].intent?.resource,
+            groupSize: groupContexts.length
+          });
+        }
       }
     }
 
@@ -499,6 +618,9 @@ function semanticRelay(options = {}) {
       totalRequests++;
 
       const intent = normalizer(req);
+
+      // Debug: Log request arrival timing
+      console.log(`[TIMING] Request ${totalRequests} arrived at ${Date.now()} - resource: ${intent.resource}, filters:`, intent.filters);
 
       let resolveDeferred, rejectDeferred;
       const deferred = new Promise((resolve, reject) => {
@@ -687,6 +809,9 @@ function semanticRelay(options = {}) {
 
   // Expose planner so demo server can wire the onDecision callback
   middleware.getPlanner = () => planner;
+
+  // Expose decision log for debugging UI
+  middleware.getDecisionLog = () => decisionLog;
 
   return middleware;
 }

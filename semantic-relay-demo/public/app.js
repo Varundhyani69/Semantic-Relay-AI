@@ -159,15 +159,22 @@ updateControlLabels();
 // ─── AI Decisions Panel ────────────────────────────────────────────────────────
 
 const aiPanelFields = {
-  aiStatusBadge:    document.querySelector('#aiStatusBadge'),
-  aiInvocations:    document.querySelector('#aiInvocations'),
+  aiStatusBadge: document.querySelector('#aiStatusBadge'),
+  aiInvocations: document.querySelector('#aiInvocations'),
   validatorRejects: document.querySelector('#validatorRejects'),
   patternCacheHits: document.querySelector('#patternCacheHits'),
-  avgEmbeddingMs:   document.querySelector('#avgEmbeddingMs'),
-  avgReasoningMs:   document.querySelector('#avgReasoningMs'),
-  estimatedCost:    document.querySelector('#estimatedCost'),
-  aiDecisionLog:    document.querySelector('#aiDecisionLog'),
-  refreshDecisions: document.querySelector('#refreshDecisions')
+  avgEmbeddingMs: document.querySelector('#avgEmbeddingMs'),
+  avgReasoningMs: document.querySelector('#avgReasoningMs'),
+  estimatedCost: document.querySelector('#estimatedCost'),
+  aiDecisionLog: document.querySelector('#aiDecisionLog'),
+  refreshDecisions: document.querySelector('#refreshDecisions'),
+  viewDecisionLogs: document.querySelector('#viewDecisionLogs')
+};
+
+const modalElements = {
+  modal: document.querySelector('#logModal'),
+  closeButton: document.querySelector('#closeModal'),
+  logContent: document.querySelector('#modalLogContent')
 };
 
 function renderAiDecisionRow(d) {
@@ -198,6 +205,44 @@ function renderAiDecisionRow(d) {
   return row;
 }
 
+function renderLogEntry(entry) {
+  const line = document.createElement('div');
+  line.className = `log-entry log-${entry.type}`;
+
+  const time = new Date(entry.timestamp).toLocaleTimeString();
+  const typeLabel = entry.type.toUpperCase().padEnd(20);
+
+  let details = '';
+  switch (entry.type) {
+    case 'solo':
+      details = `reason=${entry.reason} resource=${entry.resource} filters=${JSON.stringify(entry.filters)}`;
+      break;
+    case 'deterministic-check':
+      details = `score=${entry.score?.toFixed(3)} threshold=${entry.threshold} willTriggerAI=${entry.willTriggerAI}`;
+      break;
+    case 'ai-trigger':
+      details = `deterministicScore=${entry.deterministicScore?.toFixed(3)} filtersA=${JSON.stringify(entry.filtersA)} filtersB=${JSON.stringify(entry.filtersB)}`;
+      break;
+    case 'ai-result':
+      details = `decision=${entry.decision} confidence=${entry.confidence?.toFixed(3)} source=${entry.source} latency=${entry.latencyMs}ms`;
+      break;
+    case 'ai-split':
+      details = `resource=${entry.resource}`;
+      break;
+    case 'deterministic-handled':
+      details = `outcome=${entry.outcome} score=${entry.score?.toFixed(3)}`;
+      break;
+    case 'ai-error':
+      details = `error=${entry.error}`;
+      break;
+    default:
+      details = JSON.stringify(entry);
+  }
+
+  line.textContent = `[${time}] ${typeLabel} ${details}`;
+  return line;
+}
+
 async function fetchAndRenderAiDecisions() {
   try {
     const data = await fetch('/api/ai-decisions', { cache: 'no-store' }).then(r => r.json());
@@ -209,12 +254,12 @@ async function fetchAndRenderAiDecisions() {
       aiPanelFields.aiStatusBadge.textContent = status;
       aiPanelFields.aiStatusBadge.className = `badge badge-ai badge-${status}`;
     }
-    if (aiPanelFields.aiInvocations)    aiPanelFields.aiInvocations.textContent    = m.aiInvocations    ?? '-';
-    if (aiPanelFields.validatorRejects) aiPanelFields.validatorRejects.textContent = m.validatorRejects  ?? '-';
-    if (aiPanelFields.patternCacheHits) aiPanelFields.patternCacheHits.textContent = m.patternCacheHits  ?? '-';
-    if (aiPanelFields.avgEmbeddingMs)   aiPanelFields.avgEmbeddingMs.textContent   = m.avgEmbeddingMs    ? `${Math.round(m.avgEmbeddingMs)}ms` : '-';
-    if (aiPanelFields.avgReasoningMs)   aiPanelFields.avgReasoningMs.textContent   = m.avgReasoningMs    ? `${Math.round(m.avgReasoningMs)}ms` : '-';
-    if (aiPanelFields.estimatedCost)    aiPanelFields.estimatedCost.textContent    = m.estimatedCostUsd  != null ? `$${m.estimatedCostUsd.toFixed(5)}` : '$0.00000';
+    if (aiPanelFields.aiInvocations) aiPanelFields.aiInvocations.textContent = m.aiInvocations ?? '-';
+    if (aiPanelFields.validatorRejects) aiPanelFields.validatorRejects.textContent = m.validatorRejects ?? '-';
+    if (aiPanelFields.patternCacheHits) aiPanelFields.patternCacheHits.textContent = m.patternCacheHits ?? '-';
+    if (aiPanelFields.avgEmbeddingMs) aiPanelFields.avgEmbeddingMs.textContent = m.avgEmbeddingMs ? `${Math.round(m.avgEmbeddingMs)}ms` : '-';
+    if (aiPanelFields.avgReasoningMs) aiPanelFields.avgReasoningMs.textContent = m.avgReasoningMs ? `${Math.round(m.avgReasoningMs)}ms` : '-';
+    if (aiPanelFields.estimatedCost) aiPanelFields.estimatedCost.textContent = m.estimatedCostUsd != null ? `$${m.estimatedCostUsd.toFixed(5)}` : '$0.00000';
 
     // Render decision rows
     if (aiPanelFields.aiDecisionLog) {
@@ -236,9 +281,60 @@ async function fetchAndRenderAiDecisions() {
   }
 }
 
+async function openDecisionLogModal() {
+  try {
+    const data = await fetch('/api/decision-logs', { cache: 'no-store' }).then(r => r.json());
+
+    if (modalElements.logContent) {
+      modalElements.logContent.innerHTML = '';
+
+      if (!data.logs || data.logs.length === 0) {
+        modalElements.logContent.innerHTML = '<p class="log-empty">No decision logs available.</p>';
+      } else {
+        data.logs.forEach(entry => {
+          modalElements.logContent.appendChild(renderLogEntry(entry));
+        });
+      }
+    }
+
+    if (modalElements.modal) {
+      modalElements.modal.classList.remove('hidden');
+    }
+  } catch (err) {
+    if (modalElements.logContent) {
+      modalElements.logContent.innerHTML = `<p class="log-empty">Error loading logs: ${err.message}</p>`;
+    }
+  }
+}
+
+function closeModal() {
+  if (modalElements.modal) {
+    modalElements.modal.classList.add('hidden');
+  }
+}
+
 // Wire up refresh button
 if (aiPanelFields.refreshDecisions) {
   aiPanelFields.refreshDecisions.addEventListener('click', fetchAndRenderAiDecisions);
+}
+
+// Wire up view logs button
+if (aiPanelFields.viewDecisionLogs) {
+  aiPanelFields.viewDecisionLogs.addEventListener('click', openDecisionLogModal);
+}
+
+// Wire up modal close button
+if (modalElements.closeButton) {
+  modalElements.closeButton.addEventListener('click', closeModal);
+}
+
+// Close modal when clicking outside
+if (modalElements.modal) {
+  modalElements.modal.addEventListener('click', (e) => {
+    if (e.target === modalElements.modal) {
+      closeModal();
+    }
+  });
 }
 
 // Auto-refresh every 5 seconds
@@ -247,3 +343,4 @@ setInterval(fetchAndRenderAiDecisions, 5000);
 // Initial fetch
 fetchAndRenderAiDecisions();
 // ──────────────────────────────────────────────────────────────────────────────
+

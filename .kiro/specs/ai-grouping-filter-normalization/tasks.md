@@ -1,0 +1,87 @@
+# Implementation Plan
+
+- [x] 1. Write bug condition exploration test
+  - **Property 1: Bug Condition** - Semantic Filter Grouping
+  - **CRITICAL**: This test MUST FAIL on unfixed code - failure confirms the bug exists
+  - **DO NOT attempt to fix the test or the code when it fails**
+  - **NOTE**: This test encodes the expected behavior - it will validate the fix when it passes after implementation
+  - **GOAL**: Surface counterexamples that demonstrate the bug exists
+  - **Scoped PBT Approach**: For deterministic bugs, scope the property to the concrete failing case(s) to ensure reproducibility
+  - Test that requests with semantically equivalent filters but different key names are placed in the same bucket
+  - Test concrete failing cases:
+    - `{category:"hardware"}` and `{type:"hardware"}` with same resource and limit
+    - `{category:"hardware"}`, `{type:"hardware"}`, `{genre:"hardware"}`, `{productType:"hardware"}` all with same resource and limit
+  - Verify that after bucketing, semantically equivalent requests are in the same bucket
+  - Property: For all intentA, intentB where `isBugCondition(intentA, intentB)` holds (same resource, same limit, no explicit groupKey, different filter key names but semantically similar values), they SHALL be placed in the same bucket
+  - Run test on UNFIXED code
+  - **EXPECTED OUTCOME**: Test FAILS (this is correct - it proves the bug exists)
+  - Document counterexamples found (e.g., "requests with {category:'hardware'} and {type:'hardware'} are in different buckets instead of same bucket")
+  - Mark task complete when test is written, run, and failure is documented
+  - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5_
+
+- [x] 2. Write preservation property tests (BEFORE implementing fix)
+  - **Property 2: Preservation** - Deterministic Bucketing Behavior
+  - **IMPORTANT**: Follow observation-first methodology
+  - Observe behavior on UNFIXED code for non-buggy inputs
+  - Write property-based tests capturing observed behavior patterns from Preservation Requirements
+  - Property-based testing generates many test cases for stronger guarantees
+  - Test cases to observe and capture:
+    - Identical filters: `{category:"hardware"}` and `{category:"hardware"}` → same bucket
+    - Different resources: `/products` vs `/items` with same filters → different buckets
+    - Different limits: limit=10 vs limit=20 with same filters → different buckets
+    - Explicit groupKey: requests with explicit groupKey → separate from auto-bucketed
+    - Deterministic scoring: scorer >= threshold → grouped without AI
+    - Guardrail enforcement: maxGroupSize/maxSupersetLimit/maxPageGap violations → splits/fallbacks
+    - Page sorting: requests sorted by page within buckets
+  - Run tests on UNFIXED code
+  - **EXPECTED OUTCOME**: Tests PASS (this confirms baseline behavior to preserve)
+  - Mark task complete when tests are written, run, and passing on unfixed code
+  - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6_
+
+- [x] 3. Fix for AI Grouping Filter Normalization
+
+  - [x] 3.1 Implement the fix in groupBySimilarity()
+    - Modify bucket key construction in `semantic-relay/src/index.js` (lines 45-80)
+    - Remove `stableStringify(intent.filters)` from bucket key
+    - Change bucket key from `['auto', intent.resource, intent.limit, stableStringify(intent.filters)].join('|')` to `['auto', intent.resource, intent.limit].join('|')`
+    - Preserve explicit groupKey behavior unchanged
+    - Rely on scorer and AI layer to evaluate filter similarity within buckets
+    - Maintain page sorting within buckets
+    - Maintain sequential group formation logic
+    - _Bug_Condition: isBugCondition(intentA, intentB) where intentA.resource = intentB.resource AND intentA.limit = intentB.limit AND NOT intentA.groupKey AND NOT intentB.groupKey AND stableStringify(intentA.filters) ≠ stableStringify(intentB.filters) AND areSemanticallySimilar(intentA.filters, intentB.filters)_
+    - _Expected_Behavior: For all intentA, intentB where isBugCondition holds, they SHALL be placed in same bucket for similarity evaluation (Property 1 from design)_
+    - _Preservation: All deterministic bucketing behavior for identical filters, different resources, different limits, explicit groupKey, deterministic scoring, guardrails, page sorting, and sequential group formation (Property 2 from design)_
+    - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 3.1, 3.2, 3.3, 3.4, 3.5, 3.6_
+
+  - [x] 3.2 Verify bug condition exploration test now passes
+    - **Property 1: Expected Behavior** - Semantic Filter Grouping
+    - **IMPORTANT**: Re-run the SAME test from task 1 - do NOT write a new test
+    - The test from task 1 encodes the expected behavior
+    - When this test passes, it confirms the expected behavior is satisfied
+    - Run bug condition exploration test from step 1
+    - **EXPECTED OUTCOME**: Test PASSES (confirms bug is fixed)
+    - Verify requests with semantically equivalent filters are now in same bucket
+    - Verify AI layer can now evaluate similarity
+    - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5_
+
+  - [x] 3.3 Verify preservation tests still pass
+    - **Property 2: Preservation** - Deterministic Bucketing Behavior
+    - **IMPORTANT**: Re-run the SAME tests from task 2 - do NOT write new tests
+    - Run preservation property tests from step 2
+    - **EXPECTED OUTCOME**: Tests PASS (confirms no regressions)
+    - Confirm all preservation tests still pass after fix:
+      - Identical filters still bucketed together
+      - Different resources still bucketed separately
+      - Different limits still bucketed separately
+      - Explicit groupKey still bucketed separately
+      - Deterministic scoring still works without AI
+      - Guardrails still enforce splits/fallbacks
+      - Page sorting still maintained
+
+- [x] 4. Checkpoint - Ensure all tests pass
+  - Ensure all tests pass, ask the user if questions arise
+  - Verify bug condition test passes (semantic filters grouped)
+  - Verify preservation tests pass (no regressions)
+  - Run full test suite to catch any edge cases
+  - Verify AI stats show non-zero values when semantically equivalent filters are present
+  - Verify decision logs show ai-trigger events instead of only solo

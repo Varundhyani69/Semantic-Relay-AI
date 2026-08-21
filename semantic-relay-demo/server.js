@@ -2,6 +2,9 @@ const path = require('path');
 const express = require('express');
 const semanticRelay = require('semantic-relay');
 
+// Load environment variables from .env file
+require('dotenv').config();
+
 const app = express();
 const port = process.env.PORT || 3100;
 
@@ -24,8 +27,10 @@ const productIndex = products.reduce((index, product) => {
 }, new Map());
 
 function selectProducts(filter) {
-  if (filter && filter.category) {
-    return productIndex.get(filter.category) || [];
+  if (filter && (filter.category || filter.type || filter.genre || filter.productType)) {
+    // Handle semantic variations of category filter
+    const categoryValue = filter.category || filter.type || filter.genre || filter.productType;
+    return productIndex.get(categoryValue) || [];
   }
 
   return products;
@@ -107,6 +112,16 @@ const relayMiddleware = semanticRelay({
   cacheTtlMs: 150,
   maxCacheEntries: 64,
   include: ['/api/relay/products'],
+  // AI Configuration
+  aiMode: process.env.AI_MODE || 'adaptive',
+  aiOptions: {
+    cohereApiKey: process.env.COHERE_API_KEY,
+    geminiApiKey: process.env.GEMINI_API_KEY,
+    embeddingThreshold: parseFloat(process.env.EMBEDDING_THRESHOLD) || 0.85,
+    reasoningThreshold: parseFloat(process.env.REASONING_THRESHOLD) || 0.6,
+    minConfidence: parseFloat(process.env.MIN_CONFIDENCE) || 0.7,
+    maxPatternCacheSize: 500
+  },
   routes: {
     '/api/relay/products': {
       fetch: async ({ filter, skip, limit }) => {
@@ -140,6 +155,17 @@ const AI_DECISION_LOG_MAX = 50;
  * Safe to call with any object shape — it just stores what it gets.
  */
 function recordAiDecision(decision) {
+  console.log('🔵 [AI DECISION RECORDED]', {
+    resourceA: decision.resourceA,
+    resourceB: decision.resourceB,
+    filtersA: decision.filtersA,
+    filtersB: decision.filtersB,
+    cohereScore: decision.cohereScore,
+    geminiUsed: decision.geminiUsed,
+    validatorApproved: decision.validatorApproved,
+    mergeExecuted: decision.mergeExecuted
+  });
+
   aiDecisionLog.unshift({
     timestamp: Date.now(),
     resourceA: decision.resourceA || '',
@@ -160,7 +186,18 @@ function recordAiDecision(decision) {
 
 // Expose recordAiDecision so Varun can wire it from the planner callback
 // Usage: relayMiddleware.onAiDecision = recordAiDecision;
+console.log('🟡 [WIRING AI DECISION CALLBACK]');
 relayMiddleware.onAiDecision = recordAiDecision;
+
+// Wire the planner's onDecision callback to our recordAiDecision function
+const plannerInstance = relayMiddleware.getPlanner && relayMiddleware.getPlanner();
+console.log('🟡 [PLANNER INSTANCE]', plannerInstance ? 'Found' : 'Not found');
+if (plannerInstance) {
+  plannerInstance.onDecision = relayMiddleware.onAiDecision;
+  console.log('✅ [PLANNER WIRED] onDecision callback attached');
+} else {
+  console.log('⚠️ [PLANNER NOT FOUND] AI decisions will not be recorded');
+}
 // ─────────────────────────────────────────────────────────────────────────────
 
 app.use(express.static(path.join(__dirname, 'public')));
@@ -175,9 +212,21 @@ function parsePositiveInt(value, fallback) {
 function readStandardQuery(req) {
   const page = parsePositiveInt(req.query.page, 1);
   const limit = parsePositiveInt(req.query.limit, 12);
+
+  // Handle semantic variations of category filter
   const category = typeof req.query.category === 'string' ? req.query.category : '';
+  const type = typeof req.query.type === 'string' ? req.query.type : '';
+  const genre = typeof req.query.genre === 'string' ? req.query.genre : '';
+  const productType = typeof req.query.productType === 'string' ? req.query.productType : '';
+
+  const filter = {};
+  if (category) filter.category = category;
+  else if (type) filter.type = type;
+  else if (genre) filter.genre = genre;
+  else if (productType) filter.productType = productType;
+
   return {
-    filter: category ? { category } : {},
+    filter,
     skip: (page - 1) * limit,
     limit
   };
@@ -250,13 +299,23 @@ app.post('/api/reset', (req, res) => {
 });
 
 app.get('/api/metrics', (req, res) => {
+  const metrics = relayMiddleware.getMetrics();
+  console.log('📊 [METRICS REQUEST]', {
+    aiInvocations: metrics.aiInvocations,
+    embeddingInvocations: metrics.embeddingInvocations,
+    reasoningInvocations: metrics.reasoningInvocations,
+    validatorApprovals: metrics.validatorApprovals,
+    validatorRejects: metrics.validatorRejects,
+    aiDecisionLogLength: aiDecisionLog.length
+  });
+
   res.json({
     raw: rawStore.stats(),
     batch: batchStore.stats(),
     relay: relayStore.stats(),
     semanticBatch: semanticBatchStore.stats(),
     relayDemo: Object.assign({}, relayDemoStats),
-    semanticRelay: relayMiddleware.getMetrics()
+    semanticRelay: metrics
   });
 });
 
@@ -265,6 +324,12 @@ app.get('/api/ai-decisions', (req, res) => {
     decisions: aiDecisionLog,
     summary: relayMiddleware.getMetrics()
   });
+});
+
+// New endpoint for decision logs
+app.get('/api/decision-logs', (req, res) => {
+  const logs = relayMiddleware.getDecisionLog ? relayMiddleware.getDecisionLog() : [];
+  res.json({ logs });
 });
 
 function buildProductUrl(endpoint, page, limit, category) {
@@ -400,7 +465,27 @@ app.get('/api/benchmark', async (req, res, next) => {
     const count = Math.min(parsePositiveInt(req.query.requests, 10), 24);
     const limit = Math.min(parsePositiveInt(req.query.limit, 12), 48);
     const category = typeof req.query.category === 'string' ? req.query.category : '';
-    const pages = Array.from({ length: count }, (_, index) => index + 1);
+
+    // Enhanced: create diverse filter patterns to trigger both deterministic and AI flows
+    // When category is specified, alternate filter keys to create ambiguous semantic pairs
+    const pages = Array.from({ length: count }, (_, index) => {
+      const page = index + 1;
+      if (category) {
+        // Alternate between different filter key names for the same semantic concept
+        // This creates ambiguous pairs that will trigger AI evaluation
+        const filterVariants = [
+          { category },           // Standard key
+          { type: category },     // Semantic alternative
+          { genre: category },    // Another semantic alternative
+          { productType: category } // Yet another alternative
+        ];
+        return {
+          page,
+          filter: filterVariants[index % filterVariants.length]
+        };
+      }
+      return { page, filter: {} };
+    });
 
     rawStore.reset();
     batchStore.reset();
@@ -410,23 +495,21 @@ app.get('/api/benchmark', async (req, res, next) => {
     relayDemoStats.aggregatedRequests = 0;
     relayDemoStats.fallbackRequests = 0;
 
-    const raw = await runHttpScenario('/api/raw/products', pages, limit, category);
+    // Raw requests - build URLs with diverse filters
+    const raw = await runHttpScenario('/api/raw/products', pages.map(p => p.page), limit, category);
     const rawMetrics = rawStore.stats();
 
-    const batch = await runHttpBatchScenario(pages, limit, category);
+    // Batch requests
+    const batch = await runHttpBatchScenario(pages.map(p => p.page), limit, category);
     const batchMetrics = batchStore.stats();
 
-    const semanticBatch = await runHttpSemanticBatchScenario(pages, limit, category);
+    const semanticBatch = await runHttpSemanticBatchScenario(pages.map(p => p.page), limit, category);
     const semanticBatchMetrics = semanticBatchStore.stats();
 
+    // Enhanced relay requests with diverse filters
     const semanticRelayBefore = relayMiddleware.getMetrics();
     const relayGroup = `products-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-    const relay = await runHttpScenario('/api/relay/products', pages, limit, category, {
-      headers: {
-        'x-relay-group': relayGroup,
-        'x-relay-expected-size': String(pages.length)
-      }
-    });
+    const relay = await runEnhancedHttpRelayScenario('/api/relay/products', pages, limit, relayGroup);
     const relayMetrics = relayStore.stats();
     const semanticRelayAfter = relayMiddleware.getMetrics();
     const semanticRelayMetrics = {
@@ -445,7 +528,7 @@ app.get('/api/benchmark', async (req, res, next) => {
     };
 
     res.json({
-      pages,
+      pages: pages.map(p => p.page),
       raw: Object.assign({}, raw, { calls: rawMetrics.calls }),
       batch: Object.assign({}, batch, { calls: batchMetrics.calls }),
       semanticBatch: Object.assign({}, semanticBatch, { calls: semanticBatchMetrics.calls }),
@@ -473,6 +556,51 @@ app.get('/api/benchmark', async (req, res, next) => {
     next(error);
   }
 });
+
+// New helper function for enhanced relay scenario with diverse filters
+async function runEnhancedHttpRelayScenario(endpoint, pages, limit, relayGroup) {
+  const startedAt = Date.now();
+
+  // Stagger requests with small delays to ensure they arrive within the window
+  // but not all at once (which would cause sequential processing anyway)
+  const responses = [];
+  for (let i = 0; i < pages.length; i++) {
+    const { page, filter } = pages[i];
+    const params = new URLSearchParams({
+      page: String(page),
+      limit: String(limit)
+    });
+
+    // Add filter parameters
+    Object.keys(filter).forEach(key => {
+      params.set(key, filter[key]);
+    });
+
+    // Start request immediately but don't await yet
+    const requestPromise = fetch(`http://127.0.0.1:${port}${endpoint}?${params.toString()}`, {
+      headers: {
+        'x-relay-group': relayGroup,
+        'x-relay-expected-size': String(pages.length)
+      }
+    }).then((response) => response.json());
+
+    responses.push(requestPromise);
+
+    // Add 5ms stagger delay between requests to ensure they arrive within window
+    // but give the middleware time to process them
+    if (i < pages.length - 1) {
+      await new Promise(resolve => setTimeout(resolve, 5));
+    }
+  }
+
+  // Wait for all responses
+  const results = await Promise.all(responses);
+
+  return {
+    elapsedMs: Date.now() - startedAt,
+    items: results.flatMap((payload) => Array.isArray(payload) ? payload : payload.data || [])
+  };
+}
 
 app.get('/api/benchmark/middleware-only', async (req, res, next) => {
   try {
@@ -505,5 +633,63 @@ app.get('/api/benchmark/middleware-only', async (req, res, next) => {
 });
 
 app.listen(port, () => {
-  console.log(`semantic-relay demo running at http://localhost:${port}`);
+  console.log(`\n🚀 semantic-relay demo running at http://localhost:${port}`);
+  console.log('📋 AI Configuration:');
+  console.log('   - Mode:', process.env.AI_MODE || 'adaptive');
+  console.log('   - Cohere API Key:', process.env.COHERE_API_KEY ? '✅ Set' : '❌ Missing');
+  console.log('   - Gemini API Key:', process.env.GEMINI_API_KEY ? '✅ Set' : '❌ Missing');
+  console.log('   - Embedding Threshold:', parseFloat(process.env.EMBEDDING_THRESHOLD) || 0.85);
+  console.log('   - Reasoning Threshold:', parseFloat(process.env.REASONING_THRESHOLD) || 0.6);
+  console.log('   - Relay Threshold:', relayThreshold);
+  console.log('   - Relay Window:', relayWindowMs + 'ms');
+  console.log('\n⏳ Waiting for requests...\n');
+});
+
+// Test endpoint specifically designed to trigger AI evaluation
+app.get('/api/test-ai', async (req, res) => {
+  try {
+    // Reset stores
+    relayStore.reset();
+
+    // Create a pair of requests with same page but different filter keys (semantic equivalence)
+    const relayGroup = `ai-test-${Date.now()}`;
+    const page = 1;
+    const limit = 12;
+    const category = 'hardware';
+
+    // Request 1: category=hardware
+    const req1Promise = fetch(`http://127.0.0.1:${port}/api/relay/products?page=${page}&limit=${limit}&category=${category}`, {
+      headers: {
+        'x-relay-group': relayGroup,
+        'x-relay-expected-size': '2'
+      }
+    }).then(r => r.json());
+
+    // Small delay to ensure they're in the same window but consecutive
+    await new Promise(resolve => setTimeout(resolve, 3));
+
+    // Request 2: type=hardware (semantically equivalent but different key)
+    const req2Promise = fetch(`http://127.0.0.1:${port}/api/relay/products?page=${page}&limit=${limit}&type=${category}`, {
+      headers: {
+        'x-relay-group': relayGroup,
+        'x-relay-expected-size': '2'
+      }
+    }).then(r => r.json());
+
+    const [result1, result2] = await Promise.all([req1Promise, req2Promise]);
+
+    // Get metrics after the requests
+    const metrics = relayMiddleware.getMetrics();
+    const decisions = relayMiddleware.getDecisionLog();
+
+    res.json({
+      success: true,
+      result1Length: result1.length,
+      result2Length: result2.length,
+      metrics,
+      recentDecisions: decisions.slice(0, 10)
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 });
