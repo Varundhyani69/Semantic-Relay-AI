@@ -140,6 +140,49 @@
         </article>
       </section>
 
+      <!-- AI Layer Panel -->
+      <section class="ai-panel" aria-label="AI layer status">
+        <div class="panel-header">
+          <h2>AI Layer</h2>
+          <span id="aiStatusBadge" class="badge badge-ai">-</span>
+        </div>
+
+        <div class="ai-stats">
+          <div class="ai-stat">
+            <span>AI invocations</span>
+            <strong id="aiInvocations">-</strong>
+          </div>
+          <div class="ai-stat">
+            <span>Validator rejects</span>
+            <strong id="validatorRejects">-</strong>
+          </div>
+          <div class="ai-stat">
+            <span>Cache hits</span>
+            <strong id="patternCacheHits">-</strong>
+          </div>
+          <div class="ai-stat">
+            <span>Avg embed</span>
+            <strong id="avgEmbeddingMs">-</strong>
+          </div>
+          <div class="ai-stat">
+            <span>Avg reason</span>
+            <strong id="avgReasoningMs">-</strong>
+          </div>
+          <div class="ai-stat">
+            <span>Est. cost</span>
+            <strong id="estimatedCost">-</strong>
+          </div>
+        </div>
+
+        <div class="decision-log-header">
+          <h3>Last AI Decisions</h3>
+          <button id="refreshDecisions" type="button">Refresh</button>
+        </div>
+        <div id="aiDecisionLog" class="decision-log" aria-live="polite">
+          <p class="decision-empty">No AI decisions recorded yet. Run the benchmark first.</p>
+        </div>
+      </section>
+
       <section class="insights">
         <div class="summary">
           <h2>Run Summary</h2>

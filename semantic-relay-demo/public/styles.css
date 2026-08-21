@@ -335,3 +335,83 @@ button:disabled {
     grid-template-columns: 1fr;
   }
 }
+
+/* ── AI Panel ─────────────────────────────────────────────────────────────── */
+.ai-panel {
+  margin: 2rem 0;
+  padding: 1.5rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.panel-header h2 { margin: 0; }
+
+.badge-ai { font-size: 0.75rem; padding: 0.2rem 0.5rem; border-radius: 4px; }
+.badge-active   { background: #d1fae5; color: #065f46; }
+.badge-degraded { background: #fef3c7; color: #92400e; }
+.badge-disabled { background: #f1f5f9; color: #64748b; }
+
+.ai-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.ai-stat { display: flex; flex-direction: column; gap: 0.2rem; }
+.ai-stat span { font-size: 0.75rem; color: #64748b; }
+.ai-stat strong { font-size: 1rem; }
+
+.decision-log-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.5rem;
+}
+
+.decision-log-header h3 { margin: 0; font-size: 0.9rem; }
+
+.decision-log {
+  max-height: 300px;
+  overflow-y: auto;
+  border: 1px solid #e2e8f0;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  font-family: monospace;
+}
+
+.decision-row {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  padding: 0.4rem 0.75rem;
+  border-bottom: 1px solid #f1f5f9;
+  flex-wrap: wrap;
+}
+
+.decision-row:last-child { border-bottom: none; }
+.decision-row:nth-child(even) { background: #f8fafc; }
+
+.d-time     { color: #94a3b8; min-width: 70px; }
+.d-resource { color: #334155; min-width: 120px; font-weight: 500; }
+.d-cohere   { color: #6366f1; }
+.d-gemini   { color: #8b5cf6; }
+.d-latency  { color: #94a3b8; margin-left: auto; }
+
+.outcome        { padding: 0.15rem 0.4rem; border-radius: 3px; font-weight: 600; }
+.outcome.merged { background: #d1fae5; color: #065f46; }
+.outcome.split  { background: #fee2e2; color: #991b1b; }
+
+.validator          { font-size: 0.75rem; }
+.validator.approved { color: #059669; }
+.validator.rejected { color: #dc2626; }
+
+.decision-empty { padding: 1rem; color: #94a3b8; text-align: center; margin: 0; }
