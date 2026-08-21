@@ -12,6 +12,7 @@
   ],
   "scripts": {
     "test": "jest",
+    "eval": "node test/eval.js",
     "prepack": "npm test -- --runInBand"
   },
   "keywords": [
@@ -38,5 +39,9 @@
   },
   "devDependencies": {
     "jest": "^29.7.0"
+  },
+  "optionalDependencies": {
+    "cohere-ai": "^7.10.0",
+    "@google/generative-ai": "^0.15.0"
   }
 }
