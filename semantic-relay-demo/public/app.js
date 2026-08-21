@@ -155,3 +155,95 @@ pageSize.addEventListener('input', updateControlLabels);
 runButton.addEventListener('click', runBenchmark);
 
 updateControlLabels();
+
+// ─── AI Decisions Panel ────────────────────────────────────────────────────────
+
+const aiPanelFields = {
+  aiStatusBadge:    document.querySelector('#aiStatusBadge'),
+  aiInvocations:    document.querySelector('#aiInvocations'),
+  validatorRejects: document.querySelector('#validatorRejects'),
+  patternCacheHits: document.querySelector('#patternCacheHits'),
+  avgEmbeddingMs:   document.querySelector('#avgEmbeddingMs'),
+  avgReasoningMs:   document.querySelector('#avgReasoningMs'),
+  estimatedCost:    document.querySelector('#estimatedCost'),
+  aiDecisionLog:    document.querySelector('#aiDecisionLog'),
+  refreshDecisions: document.querySelector('#refreshDecisions')
+};
+
+function renderAiDecisionRow(d) {
+  const row = document.createElement('div');
+  row.className = 'decision-row';
+
+  const time = new Date(d.timestamp).toLocaleTimeString();
+  const cohere = d.cohereScore !== null ? d.cohereScore.toFixed(3) : 'n/a';
+  const gemini = d.geminiUsed
+    ? `Gemini ${d.geminiConfidence !== null ? d.geminiConfidence.toFixed(2) : '?'}`
+    : 'embed only';
+  const outcome = d.mergeExecuted
+    ? '<span class="outcome merged">MERGED</span>'
+    : '<span class="outcome split">SPLIT</span>';
+  const validator = d.validatorApproved
+    ? '<span class="validator approved">✓ validator</span>'
+    : '<span class="validator rejected">✗ validator</span>';
+
+  row.innerHTML = `
+    <span class="d-time">${time}</span>
+    <span class="d-resource">${d.resourceA || '-'}</span>
+    <span class="d-cohere">Cohere: ${cohere}</span>
+    <span class="d-gemini">${gemini}</span>
+    ${validator}
+    ${outcome}
+    <span class="d-latency">${d.latencyMs}ms</span>
+  `;
+  return row;
+}
+
+async function fetchAndRenderAiDecisions() {
+  try {
+    const data = await fetch('/api/ai-decisions', { cache: 'no-store' }).then(r => r.json());
+    const m = data.summary || {};
+
+    // Update stats
+    const status = m.aiStatus || 'disabled';
+    if (aiPanelFields.aiStatusBadge) {
+      aiPanelFields.aiStatusBadge.textContent = status;
+      aiPanelFields.aiStatusBadge.className = `badge badge-ai badge-${status}`;
+    }
+    if (aiPanelFields.aiInvocations)    aiPanelFields.aiInvocations.textContent    = m.aiInvocations    ?? '-';
+    if (aiPanelFields.validatorRejects) aiPanelFields.validatorRejects.textContent = m.validatorRejects  ?? '-';
+    if (aiPanelFields.patternCacheHits) aiPanelFields.patternCacheHits.textContent = m.patternCacheHits  ?? '-';
+    if (aiPanelFields.avgEmbeddingMs)   aiPanelFields.avgEmbeddingMs.textContent   = m.avgEmbeddingMs    ? `${Math.round(m.avgEmbeddingMs)}ms` : '-';
+    if (aiPanelFields.avgReasoningMs)   aiPanelFields.avgReasoningMs.textContent   = m.avgReasoningMs    ? `${Math.round(m.avgReasoningMs)}ms` : '-';
+    if (aiPanelFields.estimatedCost)    aiPanelFields.estimatedCost.textContent    = m.estimatedCostUsd  != null ? `$${m.estimatedCostUsd.toFixed(5)}` : '$0.00000';
+
+    // Render decision rows
+    if (aiPanelFields.aiDecisionLog) {
+      if (!data.decisions || data.decisions.length === 0) {
+        aiPanelFields.aiDecisionLog.innerHTML =
+          '<p class="decision-empty">No AI decisions recorded yet. Run the benchmark first.</p>';
+      } else {
+        aiPanelFields.aiDecisionLog.innerHTML = '';
+        data.decisions.forEach(d => {
+          aiPanelFields.aiDecisionLog.appendChild(renderAiDecisionRow(d));
+        });
+      }
+    }
+  } catch (err) {
+    if (aiPanelFields.aiDecisionLog) {
+      aiPanelFields.aiDecisionLog.innerHTML =
+        `<p class="decision-empty">Could not load AI decisions: ${err.message}</p>`;
+    }
+  }
+}
+
+// Wire up refresh button
+if (aiPanelFields.refreshDecisions) {
+  aiPanelFields.refreshDecisions.addEventListener('click', fetchAndRenderAiDecisions);
+}
+
+// Auto-refresh every 5 seconds
+setInterval(fetchAndRenderAiDecisions, 5000);
+
+// Initial fetch
+fetchAndRenderAiDecisions();
+// ──────────────────────────────────────────────────────────────────────────────
