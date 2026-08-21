@@ -130,6 +130,39 @@ const relayMiddleware = semanticRelay({
   }
 });
 
+// ─── AI Decision Log ──────────────────────────────────────────────────────────
+const aiDecisionLog = [];
+const AI_DECISION_LOG_MAX = 50;
+
+/**
+ * Record one AI planner decision into the circular buffer.
+ * Called by the planner callback once Varun wires it up.
+ * Safe to call with any object shape — it just stores what it gets.
+ */
+function recordAiDecision(decision) {
+  aiDecisionLog.unshift({
+    timestamp: Date.now(),
+    resourceA: decision.resourceA || '',
+    resourceB: decision.resourceB || '',
+    filtersA: decision.filtersA || {},
+    filtersB: decision.filtersB || {},
+    cohereScore: typeof decision.cohereScore === 'number' ? decision.cohereScore : null,
+    geminiUsed: decision.geminiUsed === true,
+    geminiConfidence: typeof decision.geminiConfidence === 'number' ? decision.geminiConfidence : null,
+    validatorApproved: decision.validatorApproved === true,
+    mergeExecuted: decision.mergeExecuted === true,
+    latencyMs: typeof decision.latencyMs === 'number' ? decision.latencyMs : 0
+  });
+  if (aiDecisionLog.length > AI_DECISION_LOG_MAX) {
+    aiDecisionLog.pop();
+  }
+}
+
+// Expose recordAiDecision so Varun can wire it from the planner callback
+// Usage: relayMiddleware.onAiDecision = recordAiDecision;
+relayMiddleware.onAiDecision = recordAiDecision;
+// ─────────────────────────────────────────────────────────────────────────────
+
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.json());
 app.use(relayMiddleware);
@@ -224,6 +257,13 @@ app.get('/api/metrics', (req, res) => {
     semanticBatch: semanticBatchStore.stats(),
     relayDemo: Object.assign({}, relayDemoStats),
     semanticRelay: relayMiddleware.getMetrics()
+  });
+});
+
+app.get('/api/ai-decisions', (req, res) => {
+  res.json({
+    decisions: aiDecisionLog,
+    summary: relayMiddleware.getMetrics()
   });
 });
 
