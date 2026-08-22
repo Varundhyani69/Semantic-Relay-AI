@@ -561,25 +561,40 @@ app.get('/api/benchmark', async (req, res, next) => {
 async function runEnhancedHttpRelayScenario(endpoint, pages, limit, relayGroup) {
   const startedAt = Date.now();
 
-  // Fire ALL requests in parallel so they all land within the same windowMs
-  // and the early-flush (x-relay-expected-size) can trigger immediately
-  const results = await Promise.all(pages.map(({ page, filter }) => {
+  // Stagger requests with small delays to ensure they arrive within the window
+  // but not all at once (which would cause sequential processing anyway)
+  const responses = [];
+  for (let i = 0; i < pages.length; i++) {
+    const { page, filter } = pages[i];
     const params = new URLSearchParams({
       page: String(page),
       limit: String(limit)
     });
 
+    // Add filter parameters
     Object.keys(filter).forEach(key => {
       params.set(key, filter[key]);
     });
 
-    return fetch(`http://127.0.0.1:${port}${endpoint}?${params.toString()}`, {
+    // Start request immediately but don't await yet
+    const requestPromise = fetch(`http://127.0.0.1:${port}${endpoint}?${params.toString()}`, {
       headers: {
         'x-relay-group': relayGroup,
         'x-relay-expected-size': String(pages.length)
       }
     }).then((response) => response.json());
-  }));
+
+    responses.push(requestPromise);
+
+    // Add 5ms stagger delay between requests to ensure they arrive within window
+    // but give the middleware time to process them
+    if (i < pages.length - 1) {
+      await new Promise(resolve => setTimeout(resolve, 5));
+    }
+  }
+
+  // Wait for all responses
+  const results = await Promise.all(responses);
 
   return {
     elapsedMs: Date.now() - startedAt,
