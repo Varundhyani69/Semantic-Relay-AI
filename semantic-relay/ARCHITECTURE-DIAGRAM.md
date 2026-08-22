@@ -104,7 +104,7 @@
         │         │          │  │ _callGemini()     │   │
         │         │          │  │ timeout: 5000ms   │   │
         │         │          │  │ ────────────────  │   │
-        │         │          │  │ ► GEMINI 1.5      │   │
+        │         │          │  │ ► GEMINI 3.6      │   │
         │         │          │  │   FLASH (external)│   │
         │         │          │  │   ~800ms latency  │   │
         │         │          │  │   $0.075/1M tokens│   │
@@ -184,7 +184,7 @@
 | Store | Type | Location | Size Limit | TTL |
 |---|---|---|---|---|
 | MemoryWindow | In-memory Map | `src/adapters/memory-window.js` | `maxPendingPerKey` (default 1000) | Flushed on `windowMs` timer |
-| Response Cache | In-memory Map | `src/index.js` | 64 entries | 150ms |
+| Response Cache | In-memory Map | `src/index.js` | 128 entries | configurable via `cacheTtlMs` |
 | Pattern Cache | In-memory Map + JSON file | `src/ai/pattern-cache.js` + `pattern-cache.json` | 500 entries (LRU) | Persistent across restarts |
 
 ---
@@ -194,7 +194,7 @@
 | API | Model | When Called | Timeout | Cost | Fallback |
 |---|---|---|---|---|---|
 | Cohere `/v1/embed` | `embed-english-v3.0` | Deterministic score 0.1–0.79, cache miss | 2000ms | $0.0001/call | score: -1 → deterministic fallback |
-| Gemini 1.5 Flash | `gemini-1.5-flash` | Cohere score 0.6–0.84 | 5000ms | ~$0.075/1M tokens | `{ equivalent: false, confidence: 0 }` |
+| Gemini 3.6 Flash | `gemini-3.6-flash` | Cohere score 0.6–0.84 | 5000ms | ~$0.075/1M tokens | `{ equivalent: false, confidence: 0 }` |
 
 ---
 
@@ -224,7 +224,36 @@ avgEmbeddingMs      — rolling average Cohere latency
 avgReasoningMs      — rolling average Gemini latency
 aiStatus            — 'active' | 'degraded' | 'disabled'
 estimatedCostUsd    — running cost estimate
+aiMode              — current mode: 'adaptive' | 'safe' | 'cohere-only' | 'gemini-reasoning' | 'deterministic-only' | 'disabled'
 ```
+
+---
+
+## AI Modes
+
+| Mode | Behaviour |
+|---|---|
+| `adaptive` (default) | Full pipeline: Pattern Cache → Cohere → Gemini (if ambiguous) → Validator |
+| `safe` / `disabled` | AI layer bypassed entirely — deterministic scorer only |
+| `deterministic-only` | Same as safe — no API calls |
+| `cohere-only` | Uses Cohere embeddings but never calls Gemini |
+| `gemini-reasoning` | Forces Gemini call even when Cohere is confident |
+| `pattern-cache-test` | Uses cache but skips Cohere (testing mode) |
+
+AI mode can be changed at runtime via `middleware.setAiMode(newMode)`.
+
+---
+
+## New Middleware Methods (v2.0)
+
+| Method | Description |
+|---|---|
+| `middleware.getMetrics()` | Returns all metrics including 12 AI fields |
+| `middleware.getDecisionLog()` | Returns last 100 AI decisions (circular buffer) |
+| `middleware.setAiMode(mode)` | Change AI mode at runtime without restart |
+| `middleware.getAiMode()` | Get current AI mode |
+| `middleware.clearPatternCache()` | Flush the pattern cache |
+| `middleware.getPlanner()` | Access the SemanticPlanner instance directly |
 
 ---
 
@@ -239,3 +268,5 @@ Request 16: page=16, limit=10 →  skip=150, needs rows 150–159
 Superset query: skip=0, limit=160  →  ONE DB call
 Partitioner: slice rows 0–9 for req1, 10–19 for req2, ... etc.
 ```
+
+

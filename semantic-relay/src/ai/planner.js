@@ -93,8 +93,8 @@ class SemanticPlanner {
                     this.onDecision({
                         resourceA: intentA && intentA.resource,
                         resourceB: intentB && intentB.resource,
-                        filtersA: (intentA && intentA.filters) || {},
-                        filtersB: (intentB && intentB.filters) || {},
+                        filtersA: intentA && intentA.filters,
+                        filtersB: intentB && intentB.filters,
                         cohereScore: result.cohereScore ?? null,
                         geminiUsed: result.geminiUsed ?? false,
                         geminiConfidence: result.geminiConfidence ?? null,

@@ -1,5 +1,7 @@
 # 🧪 Semantic Relay AI Caching - Manual Testing Guide
 
+> **Updated**: Gemini upgraded to `gemini-3.6-flash`. New AI modes available. Groups of any size supported.
+
 ## 📋 Prerequisites
 
 ### Optimal Settings (Already configured in `.env`)
@@ -11,6 +13,18 @@ REASONING_THRESHOLD=0.45   # Gemini reasoning threshold
 MIN_CONFIDENCE=0.6         # Minimum confidence for AI decisions
 AI_MODE=adaptive           # Uses AI for ambiguous cases
 ```
+
+### Available AI Modes
+```
+adaptive          — Full pipeline: Cache → Cohere → Gemini → Validator (default)
+safe / disabled   — No AI, deterministic only
+deterministic-only— Same as safe
+cohere-only       — Cohere embeddings but no Gemini calls
+gemini-reasoning  — Force Gemini even for high-confidence Cohere results
+pattern-cache-test— Cache lookup only, skip Cohere
+```
+
+You can switch modes at runtime: `POST /api/ai-mode { "mode": "cohere-only" }`
 
 ### Start the Server
 ```bash

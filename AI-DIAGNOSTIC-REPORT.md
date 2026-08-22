@@ -1,16 +1,18 @@
 # AI Layer Diagnostic Report
-**Date**: 2025-02-16  
+**Date**: 2025-02-16 (Updated 2026-08-22)
 **Tested By**: Kiro AI Assistant  
 **Project**: semantic-relay-ai hackathon demo
+
+> **Update**: Gemini upgraded to `gemini-3.6-flash`. All 6 AI scenarios now working. Groups of any size (2–16+) handled with O(1) AI cost.
 
 ---
 
 ## Executive Summary
 
 ✅ **AI Layer is FULLY FUNCTIONAL!**  
-❌ **Pattern Cache Persistence is BROKEN!**
-
-The AI layer (Cohere embeddings + Gemini reasoning + Validator) works perfectly. The pattern cache works in-memory during a single server session but **does NOT persist across server restarts**, which was a key demo requirement.
+✅ **Pattern Cache Persistence is NOW FIXED** (save-on-write implemented)  
+✅ **Gemini upgraded to 3.6-flash** — all 6 AI scenarios working  
+✅ **Large group handling** — AI now evaluates groups of 2–16+ requests with O(1) cost
 
 ---
 
