@@ -75,7 +75,7 @@
           <div class="col-tech">JSON.stringify()</div>
           <div class="col-year">2010</div>
           <div class="col-synonyms">❌</div>
-          <div class="col-calls"><strong id="naiveCalls">4</strong></div>
+          <div class="col-calls"><strong id="naiveCalls">-</strong></div>
           <div class="col-latency"><span id="naiveTime">-</span></div>
         </div>
 
@@ -87,8 +87,8 @@
           <div class="col-tech">ID batching</div>
           <div class="col-year">2016</div>
           <div class="col-synonyms">❌ (filter strings unsupported)</div>
-          <div class="col-calls"><strong>4</strong></div>
-          <div class="col-latency">N/A</div>
+          <div class="col-calls"><strong id="dataloaderCalls">-</strong></div>
+          <div class="col-latency"><span id="dataloaderTime">-</span></div>
         </div>
 
         <div class="comparison-row nginx-row">
@@ -99,8 +99,8 @@
           <div class="col-tech">Exact URL match</div>
           <div class="col-year">2010</div>
           <div class="col-synonyms">❌</div>
-          <div class="col-calls"><strong>4</strong></div>
-          <div class="col-latency">N/A</div>
+          <div class="col-calls"><strong id="nginxCalls">-</strong></div>
+          <div class="col-latency"><span id="nginxTime">-</span></div>
         </div>
 
         <div class="comparison-row elastic-row">
@@ -111,8 +111,8 @@
           <div class="col-tech">Query expansion</div>
           <div class="col-year">2015</div>
           <div class="col-synonyms">⚠️ (different layer - improves search quality, not load)</div>
-          <div class="col-calls"><strong>1-4</strong></div>
-          <div class="col-latency">N/A</div>
+          <div class="col-calls"><strong id="elasticCalls">-</strong></div>
+          <div class="col-latency"><span id="elasticTime">-</span></div>
         </div>
 
         <div class="comparison-row relay-row highlight-row">
@@ -123,7 +123,7 @@
           <div class="col-tech">Cohere v3.0 + Gemini Flash</div>
           <div class="col-year">2024</div>
           <div class="col-synonyms">✅</div>
-          <div class="col-calls"><strong id="relayCalls">1</strong></div>
+          <div class="col-calls"><strong id="relayCalls">-</strong></div>
           <div class="col-latency"><span id="relayTime">-</span></div>
         </div>
       </div>
@@ -131,7 +131,7 @@
       <div class="comparison-stats">
         <div class="stat-card">
           <span>DB Call Reduction</span>
-          <strong id="reductionPercent">75%</strong>
+          <strong id="reductionPercent">-</strong>
         </div>
         <div class="stat-card">
           <span>Time Saved</span>

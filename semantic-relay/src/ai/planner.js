@@ -30,7 +30,10 @@ class SemanticPlanner {
         this.knownRoutes = options.knownRoutes || {};
 
         this.embedder = new EmbeddingModel({ apiKey: options.cohereApiKey });
-        this.reasoner = new ReasoningModel({ apiKey: options.geminiApiKey });
+        this.reasoner = new ReasoningModel({
+            apiKey: options.geminiApiKey,
+            timeoutMs: options.geminiTimeoutMs
+        });
         this.cache = new PatternCache({ maxSize: options.maxPatternCacheSize || 500 });
 
         // Metrics counters
@@ -42,6 +45,7 @@ class SemanticPlanner {
         this._totalEmbeddingMs = 0;
         this._totalReasoningMs = 0;
         this._totalCostUsd = 0;
+        this._reasoningFailures = 0;
         this._aiStatus = 'active';
 
         /**
@@ -98,6 +102,8 @@ class SemanticPlanner {
                         cohereScore: result.cohereScore ?? null,
                         geminiUsed: result.geminiUsed ?? false,
                         geminiConfidence: result.geminiConfidence ?? null,
+                        geminiFailed: result.geminiFailed ?? false,
+                        geminiError: result.geminiError ?? null,
                         validatorApproved: result.validatorApproved ?? false,
                         mergeExecuted: result.decision === 'merge',
                         latencyMs: result.latencyMs
@@ -273,6 +279,21 @@ class SemanticPlanner {
             // $0.075 per 1M tokens, estimate 500 tokens per call
             this._totalCostUsd += ((gemResult.tokenCount || 500) / 1_000_000) * 0.075;
 
+            // Gemini call failed (revoked key, quota, timeout, bad JSON).
+            // That is an infrastructure problem, not a semantic verdict — report
+            // it as degraded so it is not mistaken for "not equivalent".
+            if (gemResult.failed) {
+                this._aiStatus = 'degraded';
+                this._reasoningFailures++;
+                return done({
+                    decision: 'split', canonicalFilter: null,
+                    confidence: 0, source: 'reasoning',
+                    validatorApproved: false, cohereScore,
+                    geminiUsed: true, geminiConfidence: null,
+                    geminiFailed: true, geminiError: gemResult.reason
+                });
+            }
+
             if (!gemResult.equivalent) {
                 return done({
                     decision: 'split', canonicalFilter: null,
@@ -343,6 +364,7 @@ class SemanticPlanner {
             reasoningInvocations: reaCount,
             validatorApprovals: this._validatorApprovals,
             validatorRejects: this._validatorRejects,
+            reasoningFailures: this._reasoningFailures,
             patternCacheHits: cacheStats.hits,
             patternCacheMisses: cacheStats.misses,
             avgEmbeddingMs: embCount ? this._totalEmbeddingMs / embCount : 0,

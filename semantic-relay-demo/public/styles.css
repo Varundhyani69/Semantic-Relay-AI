@@ -959,3 +959,28 @@ button:disabled {
   text-align: center;
   color: #94a3b8;
 }
+
+/* ─── Runtime DB call indicators in the comparison table ───────────────────── */
+.col-calls .calls-good {
+  color: #059669;
+}
+
+.col-calls .calls-partial {
+  color: #b45309;
+}
+
+.col-calls .calls-bad {
+  color: #dc2626;
+}
+
+.col-latency span[title] {
+  cursor: help;
+}
+
+.gemini-used.error {
+  color: #b45309;
+  background: #fef3c7;
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-weight: 600;
+}

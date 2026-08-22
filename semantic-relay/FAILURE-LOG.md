@@ -72,7 +72,66 @@
 
 ---
 
+### 5. We Benchmarked Against Stubs and Called It a Comparison
+
+**What we tried**: To prove semantic-relay beats DataLoader, nginx and Elasticsearch, we stood up three endpoints named after them and published a comparison table showing all three at 16 DB calls.
+
+**Why it failed**: Two of those endpoints contained no implementation. `/api/dataloader/products` and `/api/nginx-coalesce/products` were line-for-line identical to the naive path — a single `store.query()` with a comment above it asserting the limitation we claimed to be measuring. The table wasn't a measurement; it was the naive path run three times under different labels. The tell was in our own output: latencies of 1627 / 1627 / 1622 / 1620ms. Four "different" architectures cannot land within 5ms of each other.
+
+**Caught by**: A teammate asking "is it true that 16 DB calls happen on those approaches? Elasticsearch looks sussy." It did, because the Elasticsearch row claimed *no synonym detection* while its code demonstrably mapped `gadgets` → `electronics` and succeeded.
+
+**How we fixed**: Implemented each mechanism for real — a windowed key batcher for DataLoader, an in-flight URL coalescer for nginx, a dictionary-driven expander for Elasticsearch. Numbers changed immediately and in our disfavour: DataLoader dropped to 4 calls, Elasticsearch to 1 on dictionary hits. We now report that batching alone gets 16 → 4 and only the last 4 → 1 belongs to us.
+
+**Why this mattered more than the fix**: A judge opening `server.js` would have found comments asserting conclusions the code could not support. We would rather lose points on a narrower true claim than win on a broad false one.
+
+**Time lost**: 3 hours building the stubs, 2 hours replacing them.
+
+---
+
+### 6. The Comparison Never Sent the Synonyms
+
+**What we tried**: With the real baselines in place, we reran the benchmark. DataLoader reported 1 DB call — better than it should manage in principle.
+
+**Why it failed**: The dispatch was `pages.map(p => p.page)`, which discarded each request's filter and passed one shared category name. Every baseline received 16 *identical* requests while only semantic-relay received the four synonym values. Every baseline number we had published to that point measured the wrong scenario, and the bug survived precisely because 16 identical requests with no batching also produces 16 DB calls — the right answer for the wrong reason.
+
+**How we fixed**: `runHttpScenarioWithFilters()` sends each request's own filter. All approaches now see identical input.
+
+**Lesson**: A baseline that agrees with your expectations is not evidence. The first number that contradicted us (DataLoader at 1) is what exposed the bug, and it appeared two full iterations after the flawed comparison was written up as a result.
+
+---
+
+### 7. Chased Thresholds for Hours; the API Key Was Dead
+
+**What we tried**: Gemini began returning `confidence: 0.00` on `apparel` vs `garments`, so the merge split. We read that as a semantic verdict and spent hours tuning: raised `EMBEDDING_THRESHOLD` 0.96 → 0.975 to widen the ambiguous band, rewrote the prompt around synonym detection, swapped the synonym list three times, and documented a theory that Gemini was correctly rejecting near-synonyms.
+
+**Why it failed**: The theory was wrong and the model was never answering. Probing the API directly returned `403: Your API key was reported as leaked. Please use another API key.` followed by `429: quota exceeded`. GitHub's secret scanner had detected a key we committed in a throwaway `test-gemini.js` and notified Google, which revoked it. Our diagnostic latency was the giveaway we ignored: 937ms was far too fast for the 5000ms timeout and far too slow to be nothing.
+
+**Root cause of the misdiagnosis**: `ReasoningModel.analyze()` caught every failure and returned `{ equivalent: false, confidence: 0 }`. A revoked key, a rate limit, a timeout and a genuine "these are not synonyms" verdict were indistinguishable in every log and metric we had. We tuned thresholds against an error path.
+
+**How we fixed**:
+- Errors now carry `failed: true` with the error class, and the raw provider message is logged instead of swallowed.
+- The planner sets `aiStatus: 'degraded'`, counts `reasoningFailures`, and emits `geminiFailed` / `geminiError`.
+- The UI renders `Gemini ⚠ api-error` in amber rather than a confident `Gemini ✗`.
+
+**Also found while fixing**: `gemini-2.5-flash` now returns 404 for new API keys ("no longer available to new users"), and `gemini-3.6-flash` charges *thinking* tokens against `maxOutputTokens` — 344 thinking tokens against a 512 budget left almost no headroom, and truncation surfaces as `MAX_TOKENS` with no text at all, i.e. another silent `confidence: 0`. Fixed by raising the budget to 2048 and setting `responseMimeType: 'application/json'` with `thinkingLevel: 'low'`, which also cut latency from 4820ms to 2249ms. Note that `thinkingBudget: 0` is rejected with HTTP 400 on 3.x.
+
+**Cost**: ~5 hours of misdirected tuning, one permanently burned API key, and three documents written to explain a phenomenon that did not exist. Two of those documents have been deleted.
+
+**Lesson**: Never let a failure path and a valid negative result produce the same value. We had `confidence: 0` meaning both "the model says no" and "there is no model", and it cost us most of a day.
+
+---
+
 ## What Our System Still Gets Wrong
+
+### 0. Secret Hygiene Failed Once, Irreversibly
+
+**Issue**: A Gemini API key was hardcoded into a diagnostic script, committed, and pushed. GitHub's push protection flagged it and Google revoked the key. `.env` was correctly gitignored the whole time; the leak came through a file written specifically to debug the thing `.env` was protecting.
+
+**Still wrong**: The key remains in git history. Deleting the file does not purge earlier commits, so rotation was the only real remedy. A second key was also exposed in the same commit and must be treated as compromised.
+
+**Fix effort**: 10 minutes to rotate. Prevention: a pre-commit secret scanner (`gitleaks`) and a hard rule that diagnostics read from `process.env` and never accept a literal. Roughly 30 minutes to wire up, and it would have saved a day.
+
+---
 
 ### 1. Decision Log Shows Undefined Filters (Cosmetic)
 **Issue**: AI decision logs show `filtersA=undefined filtersB=undefined` even though AI evaluation works correctly.

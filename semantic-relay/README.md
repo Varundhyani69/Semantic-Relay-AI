@@ -4,11 +4,54 @@
 
 An Express middleware that batches similar incoming GET requests within a short time window, groups them by semantic similarity, and executes a single "superset" DB query. It partitions the result back to each original caller individually, drastically reducing redundant database calls in monolithic Express/MongoDB apps.
 
+Where it differs from every other batching layer: it groups requests whose filter **values** mean the same thing. Four users searching `electronics`, `gadgets`, `tech devices` and `electronic items` become one database call, with no synonym list written by hand.
+
+## Hackathon submission
+
+| Deliverable | File |
+|---|---|
+| Architecture diagram | [ARCHITECTURE-DIAGRAM.md](./ARCHITECTURE-DIAGRAM.md) |
+| Failure log | [FAILURE-LOG.md](./FAILURE-LOG.md) |
+| Prior art (3 closest products) | [PRIOR-ART.md](./PRIOR-ART.md) |
+| 2-minute pitch | [PITCH-SCRIPT.md](./PITCH-SCRIPT.md) |
+| Live demo | `cd ../semantic-relay-demo && node server.js` → http://localhost:3100 |
+| Evaluation harness | `npm run eval` (20 cases, exits 1 below 80% accuracy) |
+
+**Track:** Developer Tooling
+
+### Declared constraints (two required, four met)
+
+1. **Two models, not one.** Cohere `embed-english-v3.0` scores similarity; only the ambiguous band (0.50–0.974) escalates to Gemini `gemini-3.6-flash` for a reasoned verdict. Neither model can produce a merge alone — Cohere never decides in the ambiguous band, and Gemini is never consulted outside it.
+2. **Degrade gracefully.** Cohere unreachable → deterministic scoring, `aiStatus: 'degraded'`. Gemini failing → the failure is reported as `geminiFailed` with its error class, explicitly *not* as a "not equivalent" verdict. Demonstrable live by setting an invalid key.
+
+Also satisfied: **handle being wrong** (a validator with hard veto power over both models, plus `validatorRejects` metric), and **cost ceiling** (below).
+
+### Cost ceiling
+
+**$0.14/day at 10,000 requests/day.** Derivation: ~10K Cohere embed calls × $0.0001 = $1.00/day worst case, but the pattern cache collapses repeat filter pairs to zero API calls, and measured cache hit rates put real embed volume near 1.4K/day → ~$0.14. Gemini fires only in the ambiguous band (~5% of groups) at ~500 tokens × $0.075/1M ≈ $0.002/day. The 2023 equivalent was roughly $45/day at 3–5s latency, which is why this could not have shipped then.
+
+## Measured against prior art
+
+16 concurrent requests across 4 synonym values, identical input and identical 500ms window for every approach:
+
+| Approach | DB calls | Latency |
+|---|---|---|
+| Naive | 16 | 1627ms |
+| DataLoader (key batching) | 4 | 1012ms |
+| nginx (URL coalescing) | 16 | 1589ms |
+| Elasticsearch (synonym dictionary) | 1 | 795ms |
+| **semantic-relay-ai** | **1** | 2997ms |
+
+Read honestly: batching alone gets 16 → 4, and Elasticsearch reaches 1 *and beats us on latency* when its hand-maintained dictionary happens to cover your terms. Our claim is narrower and load-bearing — swap to a synonym group absent from that dictionary and Elasticsearch degrades to 4 calls while we stay at 1. Full numbers and caveats in [PRIOR-ART.md](./PRIOR-ART.md).
+
+Reproduce: `GET /api/benchmark-all?requests=16&category=electronics` then `&category=clothing`.
+
 ## Features
 - **Zero Production Dependencies** (only uses `uuid`)
+- Dual-model semantic planner with pattern cache and validator veto
 - Swappable storage adapter for window management
 - Groups similar overlapping pagination queries
-- Built-in metrics tracking
+- Built-in metrics tracking, including per-model invocation counts and cost
 
 ## Installation
 

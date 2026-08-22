@@ -214,6 +214,8 @@ function recordAiDecision(decision) {
     cohereScore: typeof decision.cohereScore === 'number' ? decision.cohereScore : null,
     geminiUsed: decision.geminiUsed === true,
     geminiConfidence: typeof decision.geminiConfidence === 'number' ? decision.geminiConfidence : null,
+    geminiFailed: decision.geminiFailed === true,
+    geminiError: decision.geminiError || null,
     validatorApproved: decision.validatorApproved === true,
     mergeExecuted: decision.mergeExecuted === true,
     latencyMs: typeof decision.latencyMs === 'number' ? decision.latencyMs : 0
@@ -574,6 +576,57 @@ async function runHttpScenario(endpoint, pages, limit, category, fetchOptions = 
   };
 }
 
+/**
+ * Fires one HTTP request per entry using that entry's OWN filter, so every
+ * approach sees the same mix of synonym values the relay path sees. Passing a
+ * single shared category here would hand the baselines 16 identical requests
+ * and quietly invalidate the whole comparison.
+ */
+async function runHttpScenarioWithFilters(endpoint, pages, limit) {
+  const startedAt = Date.now();
+  const responses = await Promise.all(
+    pages.map(({ page, filter }) => {
+      const params = new URLSearchParams({
+        page: String(page),
+        limit: String(limit)
+      });
+      Object.keys(filter || {}).forEach((key) => params.set(key, filter[key]));
+
+      return fetch(`http://127.0.0.1:${port}${endpoint}?${params.toString()}`)
+        .then((response) => response.json());
+    })
+  );
+
+  return {
+    elapsedMs: Date.now() - startedAt,
+    items: responses.flatMap((payload) => Array.isArray(payload) ? payload : payload.data || [])
+  };
+}
+
+/**
+ * The manual batch endpoint accepts one category per call, so distinct synonym
+ * values force one batch call per value — a limitation worth measuring rather
+ * than hiding.
+ */
+async function runManualBatchWithVariants(pages, limit) {
+  const byFilter = new Map();
+  pages.forEach(({ page, filter }) => {
+    const key = (filter && filter.category) || '';
+    if (!byFilter.has(key)) byFilter.set(key, []);
+    byFilter.get(key).push(page);
+  });
+
+  const startedAt = Date.now();
+  const results = await Promise.all(
+    Array.from(byFilter.entries()).map(([cat, pgs]) => runHttpBatchScenario(pgs, limit, cat))
+  );
+
+  return {
+    elapsedMs: Date.now() - startedAt,
+    items: results.flatMap((r) => r.items)
+  };
+}
+
 async function runHttpBatchScenario(pages, limit, category) {
   const startedAt = Date.now();
   const params = new URLSearchParams({
@@ -842,6 +895,429 @@ app.get('/api/benchmark/middleware-only', async (req, res, next) => {
         guardrailSplits: after.guardrailSplits - before.guardrailSplits,
         cacheHits: after.cacheHits - before.cacheHits,
         cacheMisses: after.cacheMisses - before.cacheMisses
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// COMPARISON APPROACHES - DataLoader, nginx, Elasticsearch
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Create separate stores for comparison approaches
+const dataloaderStore = createConstrainedStore('dataloader');
+const nginxStore = createConstrainedStore('nginx');
+const elasticsearchStore = createConstrainedStore('elasticsearch');
+
+/**
+ * Collects requests arriving inside a time window, groups them by a caller
+ * supplied key, and issues ONE superset query per group — the same mechanic
+ * semantic-relay uses. The only thing that varies between approaches is how
+ * the grouping key is derived, which is exactly the property under test.
+ *
+ * Every approach gets the identical windowMs so the comparison isolates
+ * "can this technique tell that two filter values are equivalent?" rather
+ * than "does this technique batch at all?".
+ */
+function createWindowedBatcher({ store, windowMs, groupKeyFn, normalizeFn }) {
+  let pending = [];
+  let timer = null;
+  let batchInvocations = 0;
+  let groupsFormed = 0;
+
+  function flush() {
+    const batch = pending;
+    pending = [];
+    timer = null;
+    if (batch.length === 0) return;
+
+    batchInvocations++;
+
+    const groups = new Map();
+    batch.forEach((job) => {
+      const key = groupKeyFn(job.filter);
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(job);
+    });
+
+    groupsFormed += groups.size;
+
+    groups.forEach((jobs) => {
+      // Merge the page range into a single superset read.
+      const minSkip = Math.min(...jobs.map((j) => j.skip));
+      const maxEnd = Math.max(...jobs.map((j) => j.skip + j.limit));
+
+      store.query(jobs[0].filter, minSkip, maxEnd - minSkip)
+        .then((result) => {
+          jobs.forEach((job) => {
+            const start = job.skip - minSkip;
+            job.resolve(result.items.slice(start, start + job.limit));
+          });
+        })
+        .catch((err) => jobs.forEach((job) => job.reject(err)));
+    });
+  }
+
+  return {
+    load(filter, skip, limit) {
+      return new Promise((resolve, reject) => {
+        pending.push({
+          filter: normalizeFn ? normalizeFn(filter) : filter,
+          skip,
+          limit,
+          resolve,
+          reject
+        });
+        if (!timer) timer = setTimeout(flush, windowMs);
+      });
+    },
+    stats() {
+      return { batchInvocations, groupsFormed };
+    },
+    reset() {
+      batchInvocations = 0;
+      groupsFormed = 0;
+    }
+  };
+}
+
+/**
+ * DataLoader (Facebook, 2016) — batches by KEY.
+ * Two requests share a DB call only when their serialized filter is byte
+ * identical, because that is all a key can express.
+ */
+const dataloaderBatcher = createWindowedBatcher({
+  store: dataloaderStore,
+  windowMs: relayWindowMs,
+  groupKeyFn: (filter) => JSON.stringify(filter)
+});
+
+/**
+ * Elasticsearch (2015) — query expansion from a HAND MAINTAINED synonym file.
+ * Deliberately partial: it covers electronics and books but nothing else,
+ * which is the real world failure mode. A term nobody wrote down stays
+ * unexpanded, so the requests never converge.
+ */
+const ES_SYNONYM_DICT = {
+  electronics: ['electronics', 'gadgets', 'tech devices', 'electronic items'],
+  books: ['books', 'literature', 'reading material', 'publications']
+};
+
+function elasticsearchNormalize(filter) {
+  if (!filter || !filter.category) return filter;
+  const value = String(filter.category).toLowerCase();
+
+  for (const [baseCategory, synonyms] of Object.entries(ES_SYNONYM_DICT)) {
+    if (synonyms.some((syn) => syn.toLowerCase() === value)) {
+      return Object.assign({}, filter, { category: baseCategory });
+    }
+  }
+  // Not in the dictionary — Elasticsearch has no idea this is a synonym.
+  return filter;
+}
+
+function elasticsearchDictionaryCovers(value) {
+  const needle = String(value || '').toLowerCase();
+  return Object.values(ES_SYNONYM_DICT)
+    .some((synonyms) => synonyms.some((syn) => syn.toLowerCase() === needle));
+}
+
+const elasticsearchBatcher = createWindowedBatcher({
+  store: elasticsearchStore,
+  windowMs: relayWindowMs,
+  normalizeFn: elasticsearchNormalize,
+  groupKeyFn: (filter) => JSON.stringify(filter)
+});
+
+/**
+ * nginx URL coalescing (2010) — collapses concurrent requests for the SAME
+ * URL onto one upstream read. Operates on the raw URL string, so any query
+ * param difference defeats it.
+ */
+function createUrlCoalescer(store) {
+  const inflight = new Map();
+  let coalescedHits = 0;
+
+  return {
+    fetch(urlKey, filter, skip, limit) {
+      const existing = inflight.get(urlKey);
+      if (existing) {
+        coalescedHits++;
+        return existing;
+      }
+
+      const promise = store.query(filter, skip, limit)
+        .then((result) => result.items)
+        .finally(() => inflight.delete(urlKey));
+
+      inflight.set(urlKey, promise);
+      return promise;
+    },
+    stats() {
+      return { coalescedHits };
+    },
+    reset() {
+      coalescedHits = 0;
+    }
+  };
+}
+
+const nginxCoalescer = createUrlCoalescer(nginxStore);
+
+/**
+ * DataLoader-style approach (Facebook, 2016)
+ * - Batches requests by NUMERIC ID only
+ * - CANNOT batch filter strings (different category values)
+ * - Result: Falls back to individual queries when filters differ
+ */
+app.get('/api/dataloader/products', async (req, res, next) => {
+  try {
+    const query = readStandardQuery(req);
+
+    // Real key batching: identical serialized filters merge into one superset
+    // read. Distinct filter values cannot merge, because a key cannot express
+    // "these two strings mean the same thing".
+    const items = await dataloaderBatcher.load(query.filter, query.skip, query.limit);
+    res.json(items);
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * nginx URL coalescing approach (2010)
+ * - Coalesces requests with IDENTICAL URLs
+ * - CANNOT coalesce when query params differ
+ * - Result: Different category values = different URLs = no coalescing
+ */
+app.get('/api/nginx-coalesce/products', async (req, res, next) => {
+  try {
+    const query = readStandardQuery(req);
+
+    // Coalesce on the canonical URL string. Concurrent hits on the same URL
+    // share one upstream read; any differing query param produces a different
+    // key and therefore a separate read.
+    const urlKey = [
+      req.path,
+      `page=${req.query.page || 1}`,
+      `limit=${req.query.limit || 12}`,
+      `category=${req.query.category || ''}`
+    ].join('|');
+
+    const items = await nginxCoalescer.fetch(urlKey, query.filter, query.skip, query.limit);
+    res.json(items);
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * Elasticsearch query expansion approach (2015)
+ * - Expands user query with synonyms at SEARCH INTERFACE
+ * - Maps all synonym variants to base category BEFORE querying
+ * - Different layer: Improves search QUALITY, not backend LOAD
+ * 
+ * Key difference from semantic-relay:
+ * - Elasticsearch: Frontend preprocessing, single user's query expanded
+ * - semantic-relay: Backend middleware, multiple users' requests grouped
+ */
+app.get('/api/elasticsearch/products', async (req, res, next) => {
+  try {
+    const query = readStandardQuery(req);
+
+    // Expand via the hand maintained synonym dictionary, then batch. Terms in
+    // the dictionary converge to one read. Terms nobody wrote down stay
+    // distinct and cost a read each.
+    const items = await elasticsearchBatcher.load(query.filter, query.skip, query.limit);
+    res.json(items);
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * Enhanced benchmark endpoint - tests ALL approaches in parallel
+ */
+app.get('/api/benchmark-all', async (req, res, next) => {
+  try {
+    const count = Math.min(parsePositiveInt(req.query.requests, 10), 24);
+    const limit = Math.min(parsePositiveInt(req.query.limit, 12), 48);
+    const category = typeof req.query.category === 'string' ? req.query.category : '';
+
+    // Create synonym variant requests
+    const pages = Array.from({ length: count }, (_, index) => {
+      const page = index + 1;
+      if (category) {
+        const synonyms = synonymGroups[category] || [category];
+        const synonymValue = synonyms[index % synonyms.length];
+        return {
+          page,
+          filter: { category: synonymValue }
+        };
+      }
+      return { page, filter: {} };
+    });
+
+    // ?dupes=N repeats every request N times. Identical URLs are exactly the
+    // case nginx coalescing was built for, so this makes its mechanism visible
+    // instead of leaving it at zero hits.
+    const dupes = Math.min(parsePositiveInt(req.query.dupes, 1), 4);
+    const pagesToRun = dupes > 1
+      ? pages.flatMap((entry) => Array.from({ length: dupes }, () => entry))
+      : pages;
+
+    // Reset all stores
+    rawStore.reset();
+    batchStore.reset();
+    dataloaderStore.reset();
+    nginxStore.reset();
+    elasticsearchStore.reset();
+    relayStore.reset();
+    semanticBatchStore.reset();
+    dataloaderBatcher.reset();
+    elasticsearchBatcher.reset();
+    nginxCoalescer.reset();
+
+    const aiBefore = relayMiddleware.getMetrics();
+
+    // Run all approaches in parallel
+    const [
+      rawResult,
+      batchResult,
+      dataloaderResult,
+      nginxResult,
+      elasticsearchResult,
+      relayResult
+    ] = await Promise.all([
+      // Every approach receives the identical per-request synonym filters.
+      // 1. Naive - no batching at all
+      runHttpScenarioWithFilters('/api/raw/products', pagesToRun, limit),
+
+      // 2. Manual Batch API - one batch call per distinct filter value
+      runManualBatchWithVariants(pagesToRun, limit),
+
+      // 3. DataLoader - real key batching
+      runHttpScenarioWithFilters('/api/dataloader/products', pagesToRun, limit),
+
+      // 4. nginx - in-flight coalescing on exact URL
+      runHttpScenarioWithFilters('/api/nginx-coalesce/products', pagesToRun, limit),
+
+      // 5. Elasticsearch - synonym dictionary + batching
+      runHttpScenarioWithFilters('/api/elasticsearch/products', pagesToRun, limit),
+
+      // 6. semantic-relay-ai - AI synonym detection
+      runEnhancedHttpRelayScenario('/api/relay/products', pagesToRun, limit, `all-${Date.now()}`)
+    ]);
+
+    const aiAfter = relayMiddleware.getMetrics();
+    const aiDelta = {
+      aiInvocations: aiAfter.aiInvocations - aiBefore.aiInvocations,
+      embeddingInvocations: aiAfter.embeddingInvocations - aiBefore.embeddingInvocations,
+      reasoningInvocations: aiAfter.reasoningInvocations - aiBefore.reasoningInvocations,
+      validatorApprovals: aiAfter.validatorApprovals - aiBefore.validatorApprovals,
+      validatorRejects: aiAfter.validatorRejects - aiBefore.validatorRejects,
+      patternCacheHits: aiAfter.patternCacheHits - aiBefore.patternCacheHits,
+      patternCacheMisses: aiAfter.patternCacheMisses - aiBefore.patternCacheMisses
+    };
+
+    res.json({
+      scenario: {
+        requests: count,
+        category,
+        synonymVariants: category ? [...new Set(pages.map(p => p.filter.category))] : []
+      },
+      aiMetrics: aiDelta,
+      correctness: {
+        sameRelayItems: sameIds(rawResult.items, relayResult.items),
+        sameElasticsearchItems: sameIds(rawResult.items, elasticsearchResult.items),
+        sameDataloaderItems: sameIds(rawResult.items, dataloaderResult.items),
+        sameNginxItems: sameIds(rawResult.items, nginxResult.items)
+      },
+      items: relayResult.items.slice(0, 12),
+      results: {
+        naive: {
+          name: 'Naive (No Batching)',
+          technology: 'Direct queries',
+          year: 2010,
+          dbCalls: rawStore.stats().calls,
+          latencyMs: rawResult.elapsedMs,
+          itemsReturned: rawResult.items.length,
+          limitation: 'Every request = separate DB call',
+          synonymDetection: false
+        },
+        manualBatch: {
+          name: 'Manual Batch API',
+          technology: 'User-specified batching',
+          year: 2015,
+          dbCalls: batchStore.stats().calls,
+          latencyMs: batchResult.elapsedMs,
+          itemsReturned: batchResult.items.length,
+          limitation: 'User must manually batch; no synonym detection',
+          synonymDetection: false
+        },
+        dataloader: {
+          name: 'DataLoader (Facebook)',
+          technology: 'Key batching (real, windowed)',
+          year: 2016,
+          dbCalls: dataloaderStore.stats().calls,
+          latencyMs: dataloaderResult.elapsedMs,
+          itemsReturned: dataloaderResult.items.length,
+          limitation: 'Batches identical keys only; cannot equate two different filter values',
+          synonymDetection: false,
+          diagnostics: dataloaderBatcher.stats()
+        },
+        nginx: {
+          name: 'nginx URL Coalescing',
+          technology: 'In-flight coalescing on exact URL',
+          year: 2010,
+          dbCalls: nginxStore.stats().calls,
+          latencyMs: nginxResult.elapsedMs,
+          itemsReturned: nginxResult.items.length,
+          limitation: 'Any query param difference produces a different key',
+          synonymDetection: false,
+          diagnostics: nginxCoalescer.stats()
+        },
+        elasticsearch: {
+          name: 'Elasticsearch Query Expansion',
+          technology: 'Hand maintained synonym dictionary + batching',
+          year: 2015,
+          dbCalls: elasticsearchStore.stats().calls,
+          latencyMs: elasticsearchResult.elapsedMs,
+          itemsReturned: elasticsearchResult.items.length,
+          limitation: 'Only expands terms a human already wrote into the dictionary',
+          synonymDetection: 'dictionary-only',
+          dictionaryCoversScenario: category
+            ? (synonymGroups[category] || [category]).every(elasticsearchDictionaryCovers)
+            : true,
+          diagnostics: elasticsearchBatcher.stats()
+        },
+        semanticRelay: {
+          name: 'semantic-relay-ai',
+          technology: 'Cohere v3.0 + Gemini 3.6 Flash',
+          year: 2024,
+          dbCalls: relayStore.stats().calls,
+          latencyMs: relayResult.elapsedMs,
+          itemsReturned: relayResult.items.length,
+          advantage: 'AI detects synonyms in VALUES - groups MULTIPLE users\' requests',
+          synonymDetection: true,
+          aiInvocations: relayMiddleware.getMetrics().aiInvocations,
+          layer: 'backend/middleware'
+        }
+      },
+      comparison: {
+        dbCallReduction: {
+          vsNaive: Math.max(0, rawStore.stats().calls - relayStore.stats().calls),
+          vsDataLoader: Math.max(0, dataloaderStore.stats().calls - relayStore.stats().calls),
+          vsNginx: Math.max(0, nginxStore.stats().calls - relayStore.stats().calls),
+          vsElasticsearch: Math.max(0, elasticsearchStore.stats().calls - relayStore.stats().calls)
+        },
+        whyOthersFail: {
+          dataloader: 'Can only batch numeric IDs like ids=[1,2,3]. Filter strings unsupported.',
+          nginx: 'Requires identical URLs. Different query params = different URLs = no coalescing.',
+          elasticsearch: 'Different problem domain: improves SEARCH QUALITY for one user, not BACKEND LOAD from multiple users.'
+        }
       }
     });
   } catch (error) {

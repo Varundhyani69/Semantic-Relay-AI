@@ -9,6 +9,12 @@ const pageSizeValue = document.querySelector('#pageSizeValue');
 const fields = {
   naiveCalls: document.querySelector('#naiveCalls'),
   naiveTime: document.querySelector('#naiveTime'),
+  dataloaderCalls: document.querySelector('#dataloaderCalls'),
+  dataloaderTime: document.querySelector('#dataloaderTime'),
+  nginxCalls: document.querySelector('#nginxCalls'),
+  nginxTime: document.querySelector('#nginxTime'),
+  elasticCalls: document.querySelector('#elasticCalls'),
+  elasticTime: document.querySelector('#elasticTime'),
   relayCalls: document.querySelector('#relayCalls'),
   relayTime: document.querySelector('#relayTime'),
   reductionPercent: document.querySelector('#reductionPercent'),
@@ -16,6 +22,16 @@ const fields = {
   summaryText: document.querySelector('#summaryText'),
   pageStrip: document.querySelector('#pageStrip'),
   productGrid: document.querySelector('#productGrid')
+};
+
+// Maps each comparison row to its cells in the table.
+// Keys match the `results` object returned by /api/benchmark-all.
+const comparisonRows = {
+  naive: { calls: fields.naiveCalls, time: fields.naiveTime },
+  dataloader: { calls: fields.dataloaderCalls, time: fields.dataloaderTime },
+  nginx: { calls: fields.nginxCalls, time: fields.nginxTime },
+  elasticsearch: { calls: fields.elasticCalls, time: fields.elasticTime },
+  semanticRelay: { calls: fields.relayCalls, time: fields.relayTime }
 };
 
 function setText(node, value) {
@@ -54,14 +70,43 @@ function renderProducts(items) {
 }
 
 function resetUiForRun() {
-  fields.naiveTime.textContent = '...';
-  fields.relayTime.textContent = '...';
-  fields.naiveCalls.textContent = '...';
-  fields.relayCalls.textContent = '...';
+  Object.values(comparisonRows).forEach((row) => {
+    if (row.calls) {
+      row.calls.textContent = '...';
+      row.calls.className = '';
+    }
+    if (row.time) row.time.textContent = '...';
+  });
   fields.reductionPercent.textContent = '...';
   fields.timeSaved.textContent = '...';
   fields.productGrid.innerHTML = '';
-  fields.summaryText.textContent = 'Running comparison of historical approaches vs semantic-relay-ai...';
+  fields.summaryText.textContent = 'Running all approaches in parallel...';
+}
+
+// Colour-codes the DB call count so the winner is obvious at a glance.
+function callsClass(calls, baseline) {
+  if (!Number.isFinite(calls) || !Number.isFinite(baseline) || baseline === 0) return '';
+  if (calls <= baseline * 0.5) return 'calls-good';
+  if (calls < baseline) return 'calls-partial';
+  return 'calls-bad';
+}
+
+function renderComparisonTable(results) {
+  const baseline = results.naive ? results.naive.dbCalls : null;
+
+  Object.entries(comparisonRows).forEach(([key, row]) => {
+    const data = results[key];
+    if (!data) return;
+
+    if (row.calls) {
+      row.calls.textContent = data.dbCalls;
+      row.calls.className = callsClass(data.dbCalls, baseline);
+    }
+    if (row.time) {
+      row.time.textContent = `${data.latencyMs}ms`;
+      row.time.title = data.limitation || data.advantage || '';
+    }
+  });
 }
 
 async function runBenchmark() {
@@ -80,40 +125,50 @@ async function runBenchmark() {
 
     if (selectedCategory) params.set('category', selectedCategory);
 
-    const result = await fetch(`/api/benchmark?${params.toString()}`, { cache: 'no-store' })
+    const result = await fetch(`/api/benchmark-all?${params.toString()}`, { cache: 'no-store' })
       .then((response) => response.json());
 
-    // Update comparison table
-    fields.naiveCalls.textContent = result.raw.calls;
-    fields.naiveTime.textContent = `${result.raw.elapsedMs}ms`;
-    fields.relayCalls.textContent = result.relay.calls;
-    fields.relayTime.textContent = `${result.relay.elapsedMs}ms`;
+    const results = result.results || {};
+    renderComparisonTable(results);
 
-    const reduction = ((result.raw.calls - result.relay.calls) / result.raw.calls) * 100;
+    const naive = results.naive || {};
+    const relay = results.semanticRelay || {};
+
+    const reduction = naive.dbCalls
+      ? ((naive.dbCalls - relay.dbCalls) / naive.dbCalls) * 100
+      : 0;
     fields.reductionPercent.textContent = `${Math.round(reduction)}%`;
 
-    const timeSavedMs = result.raw.elapsedMs - result.relay.elapsedMs;
+    const timeSavedMs = (naive.latencyMs || 0) - (relay.latencyMs || 0);
     fields.timeSaved.textContent = `${timeSavedMs}ms`;
 
-    renderProducts(result.relay.items);
+    renderProducts(result.items || []);
 
     // Show synonym detection info if available
     const synonymInfo = document.querySelector('#synonymInfo');
     const synonymList = document.querySelector('#synonymList');
-    if (result.synonymVariants && result.synonymVariants.length > 1) {
-      synonymList.textContent = result.synonymVariants.join(', ');
+    const variants = (result.scenario && result.scenario.synonymVariants) || [];
+    if (variants.length > 1) {
+      synonymList.textContent = variants.join(', ');
       synonymInfo.classList.remove('hidden');
     } else {
       synonymInfo.classList.add('hidden');
     }
 
-    const relayCorrectness = result.sameRelayItems ? 'semantic-relay-ai matched naive item IDs.' : 'semantic-relay-ai item IDs did not match naive.';
-    const aiInvocations = result.metrics.semanticRelay.aiInvocations || 0;
-    const embeddingInvocations = result.metrics.semanticRelay.embeddingInvocations || 0;
-    const reasoningInvocations = result.metrics.semanticRelay.reasoningInvocations || 0;
+    const correctness = result.correctness || {};
+    const relayCorrectness = correctness.sameRelayItems
+      ? 'semantic-relay-ai matched naive item IDs.'
+      : 'semantic-relay-ai item IDs did not match naive.';
+    const ai = result.aiMetrics || {};
 
     fields.summaryText.textContent =
-      `Naive exact matching: ${result.raw.calls} DB calls in ${result.raw.elapsedMs}ms. semantic-relay-ai: ${result.relay.calls} DB calls in ${result.relay.elapsedMs}ms (${Math.round(reduction)}% reduction). AI invoked ${aiInvocations} times (${embeddingInvocations} embeddings, ${reasoningInvocations} reasoning). ${relayCorrectness}`;
+      `Naive: ${naive.dbCalls} DB calls in ${naive.latencyMs}ms. ` +
+      `DataLoader: ${results.dataloader?.dbCalls} calls. ` +
+      `nginx: ${results.nginx?.dbCalls} calls. ` +
+      `Elasticsearch: ${results.elasticsearch?.dbCalls} calls. ` +
+      `semantic-relay-ai: ${relay.dbCalls} DB calls in ${relay.latencyMs}ms (${Math.round(reduction)}% reduction). ` +
+      `AI invoked ${ai.aiInvocations || 0} times (${ai.embeddingInvocations || 0} embeddings, ${ai.reasoningInvocations || 0} reasoning, ${ai.patternCacheHits || 0} cache hits). ` +
+      relayCorrectness;
 
     // Refresh AI metrics
     await fetchAndRenderAiDecisions();
@@ -174,10 +229,18 @@ function renderAiDecisionRow(d) {
   }
 
   // Gemini usage
-  const geminiUsedBadge = d.geminiUsed
-    ? '<span class="gemini-used yes">Gemini ✓</span>'
-    : '<span class="gemini-used no">Gemini ✗</span>';
-  const geminiConfText = d.geminiConfidence !== null ? ` (${d.geminiConfidence.toFixed(2)})` : '';
+  // A failed Gemini call must not look like a semantic "not equivalent" verdict.
+  let geminiUsedBadge;
+  if (d.geminiFailed) {
+    geminiUsedBadge = `<span class="gemini-used error" title="Gemini call failed: ${d.geminiError}">Gemini ⚠ ${d.geminiError}</span>`;
+  } else if (d.geminiUsed) {
+    geminiUsedBadge = '<span class="gemini-used yes">Gemini ✓</span>';
+  } else {
+    geminiUsedBadge = '<span class="gemini-used no">Gemini ✗</span>';
+  }
+  const geminiConfText = d.geminiConfidence !== null && d.geminiConfidence !== undefined
+    ? ` (${d.geminiConfidence.toFixed(2)})`
+    : '';
 
   const outcome = d.mergeExecuted
     ? '<span class="outcome merged">MERGED</span>'

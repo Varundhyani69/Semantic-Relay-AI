@@ -1,7 +1,9 @@
 'use strict';
 
 const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent';
-const DEFAULT_TIMEOUT_MS = 5000;
+// Headroom over the ~2.2s typical JSON-mode response so a slow call degrades
+// gracefully rather than aborting a verdict that was about to arrive.
+const DEFAULT_TIMEOUT_MS = 10000;
 
 class ReasoningModel {
   constructor(options = {}) {
@@ -44,11 +46,19 @@ class ReasoningModel {
       const reason = err.name === 'AbortError' || err.message === 'timeout'
         ? 'timeout'
         : err.message.includes('parse') ? 'parse-error' : 'api-error';
+
+      // An infrastructure failure is NOT the same as "Gemini judged them
+      // non-equivalent". Flag it so the planner can report degraded status
+      // instead of presenting a confident split.
+      console.warn(`[semantic-relay] Gemini ${reason}: ${err.message}`);
+
       return {
         equivalent: false,
         canonicalFilter: null,
         confidence: 0,
         reason,
+        failed: true,
+        errorMessage: err.message,
         latencyMs: Date.now() - start,
         tokenCount: 0
       };
@@ -159,7 +169,17 @@ Rules:
           }],
           generationConfig: {
             temperature: 0.1,      // low temperature for deterministic structured output
-            maxOutputTokens: 512
+            // gemini-3.x flash spends "thinking" tokens against this budget before
+            // emitting the answer, and truncation surfaces as MAX_TOKENS with no
+            // text at all. Keep a wide margin.
+            maxOutputTokens: 2048,
+            // Declaring a JSON response type drops thinking tokens to zero and
+            // roughly halves latency (measured 4820ms -> 2249ms), which is what
+            // keeps this call inside a middleware time budget. Note that
+            // thinkingBudget:0 is rejected with HTTP 400 on 3.x; thinkingLevel
+            // is the supported control.
+            responseMimeType: 'application/json',
+            thinkingConfig: { thinkingLevel: 'low' }
           }
         }),
         signal: controller.signal

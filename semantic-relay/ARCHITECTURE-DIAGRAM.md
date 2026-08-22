@@ -92,7 +92,7 @@
         │         │                       │
         │         │          ┌────────────┼────────────┐
         │         │          │            │            │
-        │         │       < 0.6      0.6–0.84      >= 0.85
+        │         │       < 0.50    0.50–0.974     >= 0.975
         │         │       SPLIT           │          MERGE
         │         │          │            ▼             │
         │         │          │  ┌──────────────────┐   │
@@ -102,11 +102,13 @@
         │         │          │  │ ────────────────  │   │
         │         │          │  │ _buildPrompt()    │   │
         │         │          │  │ _callGemini()     │   │
-        │         │          │  │ timeout: 5000ms   │   │
+        │         │          │  │ timeout: 10000ms  │   │
         │         │          │  │ ────────────────  │   │
-        │         │          │  │ ► GEMINI 1.5      │   │
+        │         │          │  │ ► GEMINI 3.6      │   │
         │         │          │  │   FLASH (external)│   │
-        │         │          │  │   ~800ms latency  │   │
+        │         │          │  │   ~2250ms latency │   │
+        │         │          │  │   JSON mode on    │   │
+        │         │          │  │   thinking: low   │   │
         │         │          │  │   $0.075/1M tokens│   │
         │         │          │  │ ────────────────  │   │
         │         │          │  │ Returns:          │   │
@@ -193,8 +195,8 @@
 
 | API | Model | When Called | Timeout | Cost | Fallback |
 |---|---|---|---|---|---|
-| Cohere `/v1/embed` | `embed-english-v3.0` | Deterministic score 0.1–0.79, cache miss | 2000ms | $0.0001/call | score: -1 → deterministic fallback |
-| Gemini 1.5 Flash | `gemini-1.5-flash` | Cohere score 0.6–0.84 | 5000ms | ~$0.075/1M tokens | `{ equivalent: false, confidence: 0 }` |
+| Cohere `/v1/embed` | `embed-english-v3.0` | Deterministic score 0.1–0.79, cache miss | 2000ms | $0.0001/call | score: -1 → deterministic fallback, `aiStatus: degraded` |
+| Gemini | `gemini-3.6-flash` | Cohere score 0.50–0.974 | 10000ms | ~$0.075/1M tokens | `{ failed: true, reason }` → `aiStatus: degraded` (distinct from a real `equivalent: false`) |
 
 ---
 
