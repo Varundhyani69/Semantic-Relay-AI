@@ -8,34 +8,37 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                         USER REQUESTS                            │
-│  GET /api/relay/products?page=1&category=hardware  (×16 reqs)   │
+│                         USER REQUESTS                           │
+│  GET /api/relay/products?page=1&category=electronics            │
+│  GET /api/relay/products?page=2&category=gadgets                │
+│  GET /api/relay/products?page=3&category=tech%20devices         │
 └────────────────────────┬────────────────────────────────────────┘
                          ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                    EXPRESS MIDDLEWARE                            │
-│              semanticRelay({ windowMs, threshold })              │
+│                    EXPRESS MIDDLEWARE                           │
+│              semanticRelay({ windowMs, threshold })             │
 └────────────────────────┬────────────────────────────────────────┘
                          ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                        NORMALIZER                                │
-│        Extract: resource, page, limit, filters, groupKey         │
-│                  Output: Intent { intentId, ... }                │
+│                        NORMALIZER                               │
+│        Extract: resource, page, limit, filters, groupKey        │
+│                  Output: Intent { intentId, ... }               │
 └────────────────────────┬────────────────────────────────────────┘
                          ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                      WINDOW MANAGER                              │
+│                      WINDOW MANAGER                             │
 │     Collect requests within windowMs (default: 20ms) window     │
-│          Early flush if x-relay-expected-size reached            │
-│               Data store: MemoryWindow (in-memory)               │
+│          Early flush if x-relay-expected-size reached           │
+│               Data store: MemoryWindow (in-memory)              │
 └────────────────────────┬────────────────────────────────────────┘
                          ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                   DETERMINISTIC SCORER                           │
+│                   DETERMINISTIC SCORER                          │
 │   Compare resource, filters, page per pair  →  score 0.0–1.0    │
-│   Same filters + adjacent pages = 0.9                            │
-│   Different filter keys, same resource  = 0.3                    │
-│   Different resource  = 0.0                                      │
+│   Same filters + adjacent pages = 0.9                           │
+│   Different filter VALUES (e.g., "electronics" vs "gadgets")    │
+│     → score = 0.3 (ambiguous, triggers AI)                      │
+│   Different resource  = 0.0                                     │
 └───────┬──────────────────┬──────────────────┬───────────────────┘
         │                  │                  │
    score >= 0.8      score 0.1–0.79       score = 0
@@ -69,13 +72,13 @@
         │           │             │          │
         │           ▼             ▼          │
         │    ┌──────────┐  ┌─────────────────────────────────────┐
-        │    │  RETURN  │  │         EMBEDDING MODEL              │
-        │    │  CACHED  │  │     src/ai/embedding-model.js        │
-        │    │  ~0ms    │  │  ─────────────────────────────────── │
-        │    │  $0 cost │  │  _intentToText(): sorted key=val     │
-        │    └────┬─────┘  │  _callCohere(): POST /v1/embed       │
-        │         │        │  model: embed-english-v3.0           │
-        │         │        │  timeout: 2000ms                     │
+        │    │  RETURN  │  │         EMBEDDING MODEL             │
+        │    │  CACHED  │  │     src/ai/embedding-model.js       │
+        │    │  ~0ms    │  │  ───────────────────────────────────│
+        │    │  $0 cost │  │  _intentToText(): sorted key=val    │
+        │    └────┬─────┘  │  _callCohere(): POST /v1/embed      │
+        │         │        │  model: embed-english-v3.0          │
+        │         │        │  timeout: 2000ms                    │
         │         │        │  _cosineSimilarity(): dot / (|a||b|) │
         │         │        │  ─────────────────────────────────── │
         │         │        │  ► COHERE API (external)             │

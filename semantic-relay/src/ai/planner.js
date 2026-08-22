@@ -108,8 +108,18 @@ class SemanticPlanner {
         };
 
         try {
-            // ── Step 1: safe mode bypass ────────────────────────────────────────────
-            if (this.aiMode === 'safe') {
+            // ── Step 1: Mode-specific bypasses ──────────────────────────────────────
+            if (this.aiMode === 'safe' || this.aiMode === 'disabled') {
+                return done({
+                    decision: 'fallback', canonicalFilter: null,
+                    confidence: 0, source: 'fallback',
+                    validatorApproved: false, cohereScore: null,
+                    geminiUsed: false, geminiConfidence: null
+                });
+            }
+
+            if (this.aiMode === 'deterministic-only') {
+                // Skip all AI — immediate fallback
                 return done({
                     decision: 'fallback', canonicalFilter: null,
                     confidence: 0, source: 'fallback',
@@ -123,7 +133,7 @@ class SemanticPlanner {
                 (intentA && intentA.filters) || {},
                 (intentB && intentB.filters) || {}
             );
-            if (cachedFilter !== null) {
+            if (cachedFilter !== null && this.aiMode !== 'pattern-cache-test') {
                 const plan = {
                     equivalent: true, canonicalFilter: cachedFilter,
                     confidence: 1.0, reason: 'from-cache'
@@ -174,8 +184,54 @@ class SemanticPlanner {
                 });
             }
 
-            // ── Step 3a: high-confidence embedding match (skip Gemini) ─────────────
-            if (cohereScore >= this.embeddingThreshold) {
+            // ── Step 3a: cohere-only mode — stop at embedding, no Gemini ───────────
+            if (this.aiMode === 'cohere-only') {
+                if (cohereScore >= this.embeddingThreshold) {
+                    const plan = {
+                        equivalent: true,
+                        canonicalFilter: Object.assign({}, (intentA && intentA.filters) || {}),
+                        confidence: cohereScore,
+                        reason: 'cohere-only-mode'
+                    };
+                    const v = validate(plan, intentA, intentB, {
+                        maxSupersetLimit: this.maxSupersetLimit,
+                        minConfidence: this.minConfidence,
+                        knownRoutes: this.knownRoutes
+                    });
+                    if (!v.safe) {
+                        this._validatorRejects++;
+                        return done({
+                            decision: 'split', canonicalFilter: null,
+                            confidence: plan.confidence, source: 'embedding',
+                            validatorApproved: false, cohereScore,
+                            geminiUsed: false, geminiConfidence: null
+                        });
+                    }
+                    this.cache.set(
+                        (intentA && intentA.filters) || {},
+                        (intentB && intentB.filters) || {},
+                        plan.canonicalFilter
+                    );
+                    this._validatorApprovals++;
+                    return done({
+                        decision: 'merge', canonicalFilter: plan.canonicalFilter,
+                        confidence: plan.confidence, source: 'embedding',
+                        validatorApproved: true, cohereScore,
+                        geminiUsed: false, geminiConfidence: null
+                    });
+                } else {
+                    // Below embedding threshold in cohere-only mode → split
+                    return done({
+                        decision: 'split', canonicalFilter: null,
+                        confidence: cohereScore, source: 'embedding',
+                        validatorApproved: false, cohereScore,
+                        geminiUsed: false, geminiConfidence: null
+                    });
+                }
+            }
+
+            // ── Step 3b: high-confidence embedding match (skip Gemini) in adaptive mode ─
+            if (cohereScore >= this.embeddingThreshold && this.aiMode !== 'gemini-reasoning') {
                 const plan = {
                     equivalent: true,
                     canonicalFilter: Object.assign({}, (intentA && intentA.filters) || {}),
@@ -210,7 +266,7 @@ class SemanticPlanner {
                 });
             }
 
-            // ── Step 4: ambiguous zone (0.6–0.84) → call Gemini ────────────────────
+            // ── Step 4: ambiguous zone (0.6–0.84) OR gemini-reasoning mode → call Gemini ─
             this._reasoningInvocations++;
             const gemResult = await this.reasoner.analyze(intentA, intentB, cohereScore);
             this._totalReasoningMs += gemResult.latencyMs || 0;
@@ -292,8 +348,51 @@ class SemanticPlanner {
             avgEmbeddingMs: embCount ? this._totalEmbeddingMs / embCount : 0,
             avgReasoningMs: reaCount ? this._totalReasoningMs / reaCount : 0,
             aiStatus: this._aiStatus,
-            estimatedCostUsd: this._totalCostUsd
+            estimatedCostUsd: this._totalCostUsd,
+            aiMode: this.aiMode
         };
+    }
+
+    /**
+     * Dynamically change the AI mode at runtime.
+     * Valid modes: 'disabled', 'deterministic-only', 'cohere-only', 
+     *              'gemini-reasoning', 'adaptive', 'pattern-cache-test'
+     *
+     * @param {string} newMode
+     */
+    setAiMode(newMode) {
+        const validModes = [
+            'disabled',
+            'deterministic-only',
+            'cohere-only',
+            'gemini-reasoning',
+            'adaptive',
+            'pattern-cache-test',
+            'safe'  // legacy alias for disabled
+        ];
+
+        if (!validModes.includes(newMode)) {
+            throw new Error(`Invalid AI mode: ${newMode}. Must be one of: ${validModes.join(', ')}`);
+        }
+
+        this.aiMode = newMode;
+        console.log(`[SemanticPlanner] AI mode changed to: ${newMode}`);
+    }
+
+    /**
+     * Get the current AI mode.
+     * @returns {string}
+     */
+    getAiMode() {
+        return this.aiMode;
+    }
+
+    /**
+     * Clear the pattern cache.
+     */
+    clearPatternCache() {
+        this.cache.clear();
+        console.log('[SemanticPlanner] Pattern cache cleared');
     }
 }
 

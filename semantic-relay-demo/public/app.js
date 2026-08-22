@@ -7,22 +7,12 @@ const requestCountValue = document.querySelector('#requestCountValue');
 const pageSizeValue = document.querySelector('#pageSizeValue');
 
 const fields = {
-  rawTime: document.querySelector('#rawTime'),
-  rawCalls: document.querySelector('#rawCalls'),
-  rawItems: document.querySelector('#rawItems'),
-  batchTime: document.querySelector('#batchTime'),
-  batchCalls: document.querySelector('#batchCalls'),
-  batchSavedCalls: document.querySelector('#batchSavedCalls'),
-  semanticBatchTime: document.querySelector('#semanticBatchTime'),
-  semanticBatchCalls: document.querySelector('#semanticBatchCalls'),
-  semanticBatchSavedCalls: document.querySelector('#semanticBatchSavedCalls'),
-  relayTime: document.querySelector('#relayTime'),
+  naiveCalls: document.querySelector('#naiveCalls'),
+  naiveTime: document.querySelector('#naiveTime'),
   relayCalls: document.querySelector('#relayCalls'),
-  relaySavedCalls: document.querySelector('#relaySavedCalls'),
-  rawBar: document.querySelector('#rawBar'),
-  batchBar: document.querySelector('#batchBar'),
-  semanticBatchBar: document.querySelector('#semanticBatchBar'),
-  relayBar: document.querySelector('#relayBar'),
+  relayTime: document.querySelector('#relayTime'),
+  reductionPercent: document.querySelector('#reductionPercent'),
+  timeSaved: document.querySelector('#timeSaved'),
   summaryText: document.querySelector('#summaryText'),
   pageStrip: document.querySelector('#pageStrip'),
   productGrid: document.querySelector('#productGrid')
@@ -63,33 +53,15 @@ function renderProducts(items) {
   });
 }
 
-function paintBars(rawMs, batchMs, semanticBatchMs, relayMs) {
-  const max = Math.max(rawMs, batchMs, semanticBatchMs, relayMs, 1);
-  fields.rawBar.style.width = `${Math.max(4, (rawMs / max) * 100)}%`;
-  fields.batchBar.style.width = `${Math.max(4, (batchMs / max) * 100)}%`;
-  fields.semanticBatchBar.style.width = `${Math.max(4, (semanticBatchMs / max) * 100)}%`;
-  fields.relayBar.style.width = `${Math.max(4, (relayMs / max) * 100)}%`;
-}
-
 function resetUiForRun() {
-  fields.rawTime.textContent = '...';
-  fields.rawCalls.textContent = '...';
-  fields.rawItems.textContent = '...';
-  fields.batchTime.textContent = '...';
-  fields.batchCalls.textContent = '...';
-  fields.batchSavedCalls.textContent = '...';
-  fields.semanticBatchTime.textContent = '...';
-  fields.semanticBatchCalls.textContent = '...';
-  fields.semanticBatchSavedCalls.textContent = '...';
+  fields.naiveTime.textContent = '...';
   fields.relayTime.textContent = '...';
+  fields.naiveCalls.textContent = '...';
   fields.relayCalls.textContent = '...';
-  fields.relaySavedCalls.textContent = '...';
-  fields.rawBar.style.width = '0';
-  fields.batchBar.style.width = '0';
-  fields.semanticBatchBar.style.width = '0';
-  fields.relayBar.style.width = '0';
+  fields.reductionPercent.textContent = '...';
+  fields.timeSaved.textContent = '...';
   fields.productGrid.innerHTML = '';
-  fields.summaryText.textContent = 'Server is running raw requests, transport batch, semantic batch, and normal requests through semantic-relay.';
+  fields.summaryText.textContent = 'Running comparison of historical approaches vs semantic-relay-ai...';
 }
 
 async function runBenchmark() {
@@ -111,38 +83,40 @@ async function runBenchmark() {
     const result = await fetch(`/api/benchmark?${params.toString()}`, { cache: 'no-store' })
       .then((response) => response.json());
 
-    fields.rawTime.textContent = `${result.raw.elapsedMs}ms`;
-    fields.rawCalls.textContent = result.raw.calls;
-    fields.rawItems.textContent = result.raw.items.length;
-
-    fields.batchTime.textContent = `${result.batch.elapsedMs}ms`;
-    fields.batchCalls.textContent = result.batch.calls;
-    fields.batchSavedCalls.textContent = result.batchSavedCalls;
-
-    fields.semanticBatchTime.textContent = `${result.semanticBatch.elapsedMs}ms`;
-    fields.semanticBatchCalls.textContent = result.semanticBatch.calls;
-    fields.semanticBatchSavedCalls.textContent = result.semanticBatchSavedCalls;
-
-    fields.relayTime.textContent = `${result.relay.elapsedMs}ms`;
+    // Update comparison table
+    fields.naiveCalls.textContent = result.raw.calls;
+    fields.naiveTime.textContent = `${result.raw.elapsedMs}ms`;
     fields.relayCalls.textContent = result.relay.calls;
-    fields.relaySavedCalls.textContent = result.relaySavedCalls;
-    paintBars(result.raw.elapsedMs, result.batch.elapsedMs, result.semanticBatch.elapsedMs, result.relay.elapsedMs);
+    fields.relayTime.textContent = `${result.relay.elapsedMs}ms`;
+
+    const reduction = ((result.raw.calls - result.relay.calls) / result.raw.calls) * 100;
+    fields.reductionPercent.textContent = `${Math.round(reduction)}%`;
+
+    const timeSavedMs = result.raw.elapsedMs - result.relay.elapsedMs;
+    fields.timeSaved.textContent = `${timeSavedMs}ms`;
+
     renderProducts(result.relay.items);
 
-    const groupWord = result.metrics.relayDemo.aggregateGroups === 1 ? 'batch' : 'batches';
-    const directFetches = result.metrics.semanticRelay.directGroupedFetches || 0;
-    const guardrails = result.metrics.semanticRelay.guardrailSplits || result.metrics.semanticRelay.guardrailFallbacks
-      ? ` Guardrails split ${result.metrics.semanticRelay.guardrailSplits} group(s) and fell back ${result.metrics.semanticRelay.guardrailFallbacks} request(s).`
-      : ' Guardrails allowed the grouped fetch.';
-    const cacheText = result.metrics.semanticRelay.cacheHits
-      ? ` Cache hits: ${result.metrics.semanticRelay.cacheHits}.`
-      : '';
-    const batchCorrectness = result.sameBatchItems ? 'Transport batch matched raw item IDs.' : 'Transport batch item IDs did not match raw.';
-    const semanticBatchCorrectness = result.sameSemanticBatchItems ? 'Semantic batch matched raw item IDs.' : 'Semantic batch item IDs did not match raw.';
-    const relayCorrectness = result.sameRelayItems ? 'semantic-relay matched raw item IDs.' : 'semantic-relay item IDs did not match raw.';
+    // Show synonym detection info if available
+    const synonymInfo = document.querySelector('#synonymInfo');
+    const synonymList = document.querySelector('#synonymList');
+    if (result.synonymVariants && result.synonymVariants.length > 1) {
+      synonymList.textContent = result.synonymVariants.join(', ');
+      synonymInfo.classList.remove('hidden');
+    } else {
+      synonymInfo.classList.add('hidden');
+    }
+
+    const relayCorrectness = result.sameRelayItems ? 'semantic-relay-ai matched naive item IDs.' : 'semantic-relay-ai item IDs did not match naive.';
+    const aiInvocations = result.metrics.semanticRelay.aiInvocations || 0;
+    const embeddingInvocations = result.metrics.semanticRelay.embeddingInvocations || 0;
+    const reasoningInvocations = result.metrics.semanticRelay.reasoningInvocations || 0;
 
     fields.summaryText.textContent =
-      `Raw Express used ${result.raw.calls} DB calls. Transport Batch API used ${result.batch.calls}. Semantic Batch used ${result.semanticBatch.calls}. Transparent semantic-relay used ${result.relay.calls}, grouping ${result.metrics.relayDemo.aggregatedRequests} normal GET requests into ${result.metrics.relayDemo.aggregateGroups} ${groupWord} with ${directFetches} direct grouped fetch. ${guardrails}${cacheText} Semantic Batch finished ${result.semanticBatchFasterByMs}ms faster than raw; transparent relay finished ${result.relayFasterByMs}ms faster than raw. ${batchCorrectness} ${semanticBatchCorrectness} ${relayCorrectness}`;
+      `Naive exact matching: ${result.raw.calls} DB calls in ${result.raw.elapsedMs}ms. semantic-relay-ai: ${result.relay.calls} DB calls in ${result.relay.elapsedMs}ms (${Math.round(reduction)}% reduction). AI invoked ${aiInvocations} times (${embeddingInvocations} embeddings, ${reasoningInvocations} reasoning). ${relayCorrectness}`;
+
+    // Refresh AI metrics
+    await fetchAndRenderAiDecisions();
   } catch (error) {
     fields.summaryText.textContent = `Benchmark failed: ${error.message}`;
   } finally {
@@ -168,7 +142,9 @@ const aiPanelFields = {
   estimatedCost: document.querySelector('#estimatedCost'),
   aiDecisionLog: document.querySelector('#aiDecisionLog'),
   refreshDecisions: document.querySelector('#refreshDecisions'),
-  viewDecisionLogs: document.querySelector('#viewDecisionLogs')
+  viewDecisionLogs: document.querySelector('#viewDecisionLogs'),
+  aiModeSelect: document.querySelector('#aiModeSelect'),
+  clearCacheButton: document.querySelector('#clearCache')
 };
 
 const modalElements = {
@@ -182,10 +158,27 @@ function renderAiDecisionRow(d) {
   row.className = 'decision-row';
 
   const time = new Date(d.timestamp).toLocaleTimeString();
-  const cohere = d.cohereScore !== null ? d.cohereScore.toFixed(3) : 'n/a';
-  const gemini = d.geminiUsed
-    ? `Gemini ${d.geminiConfidence !== null ? d.geminiConfidence.toFixed(2) : '?'}`
-    : 'embed only';
+
+  // Show filter values for better debugging
+  const filterA = d.filtersA && d.filtersA.category ? d.filtersA.category : '-';
+  const filterB = d.filtersB && d.filtersB.category ? d.filtersB.category : '-';
+
+  // Cohere score or reason for n/a
+  let cohereText = 'n/a';
+  if (d.cohereScore !== null && d.cohereScore !== undefined) {
+    cohereText = d.cohereScore.toFixed(3);
+  } else if (d.validatorApproved && d.mergeExecuted) {
+    cohereText = '<span style="color: #10b981; font-weight: 600;">✓ cached</span>';  // From pattern cache
+  } else {
+    cohereText = '<span style="color: #94a3b8;">skipped</span>';  // Deterministic or split
+  }
+
+  // Gemini usage
+  const geminiUsedBadge = d.geminiUsed
+    ? '<span class="gemini-used yes">Gemini ✓</span>'
+    : '<span class="gemini-used no">Gemini ✗</span>';
+  const geminiConfText = d.geminiConfidence !== null ? ` (${d.geminiConfidence.toFixed(2)})` : '';
+
   const outcome = d.mergeExecuted
     ? '<span class="outcome merged">MERGED</span>'
     : '<span class="outcome split">SPLIT</span>';
@@ -195,9 +188,9 @@ function renderAiDecisionRow(d) {
 
   row.innerHTML = `
     <span class="d-time">${time}</span>
-    <span class="d-resource">${d.resourceA || '-'}</span>
-    <span class="d-cohere">Cohere: ${cohere}</span>
-    <span class="d-gemini">${gemini}</span>
+    <span class="d-filters">${filterA} vs ${filterB}</span>
+    <span class="d-cohere">Cohere: ${cohereText}</span>
+    ${geminiUsedBadge}${geminiConfText}
     ${validator}
     ${outcome}
     <span class="d-latency">${d.latencyMs}ms</span>
@@ -342,5 +335,100 @@ setInterval(fetchAndRenderAiDecisions, 5000);
 
 // Initial fetch
 fetchAndRenderAiDecisions();
+
+// Load current AI mode on page load
+async function loadCurrentAiMode() {
+  try {
+    const response = await fetch('/api/ai-mode', { cache: 'no-store' });
+    const data = await response.json();
+    if (aiPanelFields.aiModeSelect && data.mode) {
+      aiPanelFields.aiModeSelect.value = data.mode;
+    }
+  } catch (err) {
+    console.error('Failed to load AI mode:', err);
+  }
+}
+
+loadCurrentAiMode();
+
+// Handle AI mode change
+if (aiPanelFields.aiModeSelect) {
+  aiPanelFields.aiModeSelect.addEventListener('change', async (e) => {
+    const newMode = e.target.value;
+    try {
+      const response = await fetch('/api/ai-mode', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: newMode })
+      });
+      const data = await response.json();
+
+      if (data.ok) {
+        console.log(`✅ AI mode changed to: ${newMode}`);
+        // Show notification
+        const oldSummary = fields.summaryText.textContent;
+        fields.summaryText.textContent = `✅ AI mode changed to: ${newMode}`;
+        fields.summaryText.style.color = '#059669';
+        setTimeout(() => {
+          fields.summaryText.textContent = oldSummary;
+          fields.summaryText.style.color = '';
+        }, 2000);
+
+        // Refresh AI metrics to reflect new mode
+        await fetchAndRenderAiDecisions();
+      } else {
+        console.error('Failed to change AI mode:', data.error || data.message);
+        fields.summaryText.textContent = `❌ Failed to change mode: ${data.error || data.message}`;
+        fields.summaryText.style.color = '#dc2626';
+      }
+    } catch (err) {
+      console.error('Error changing AI mode:', err);
+      fields.summaryText.textContent = `❌ Error changing mode: ${err.message}`;
+      fields.summaryText.style.color = '#dc2626';
+    }
+  });
+}
+
+// Handle clear cache button
+if (aiPanelFields.clearCacheButton) {
+  aiPanelFields.clearCacheButton.addEventListener('click', async () => {
+    try {
+      aiPanelFields.clearCacheButton.disabled = true;
+      aiPanelFields.clearCacheButton.textContent = 'Clearing...';
+
+      const response = await fetch('/api/clear-cache', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      const data = await response.json();
+
+      if (data.ok) {
+        console.log('✅ Pattern cache cleared');
+        // Show notification
+        const oldSummary = fields.summaryText.textContent;
+        fields.summaryText.textContent = '✅ Pattern cache cleared successfully';
+        fields.summaryText.style.color = '#059669';
+        setTimeout(() => {
+          fields.summaryText.textContent = oldSummary;
+          fields.summaryText.style.color = '';
+        }, 2000);
+
+        // Refresh AI metrics
+        await fetchAndRenderAiDecisions();
+      } else {
+        console.error('Failed to clear cache:', data.error || data.message);
+        fields.summaryText.textContent = `❌ Failed to clear cache: ${data.error || data.message}`;
+        fields.summaryText.style.color = '#dc2626';
+      }
+    } catch (err) {
+      console.error('Error clearing cache:', err);
+      fields.summaryText.textContent = `❌ Error clearing cache: ${err.message}`;
+      fields.summaryText.style.color = '#dc2626';
+    } finally {
+      aiPanelFields.clearCacheButton.disabled = false;
+      aiPanelFields.clearCacheButton.textContent = 'Clear Pattern Cache';
+    }
+  });
+}
 // ──────────────────────────────────────────────────────────────────────────────
 

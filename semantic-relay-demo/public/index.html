@@ -30,13 +30,19 @@
         </label>
 
         <label>
-          Category
+          Demo Scenario (Triggers Different AI Paths)
           <select id="category">
-            <option value="">All</option>
-            <option value="hardware">Hardware</option>
-            <option value="apparel">Apparel</option>
-            <option value="books">Books</option>
-            <option value="kitchen">Kitchen</option>
+            <option value="">All Products (No AI)</option>
+            <optgroup label="━━━ AI Decision Paths ━━━">
+              <option value="electronics">🎯 High Confidence - Cohere Only (electronics synonyms)</option>
+              <option value="clothing">🤔 Ambiguous - Cohere + Gemini (clothing synonyms)</option>
+              <option value="books">💾 Pattern Cache Hit (books - cached pattern)</option>
+              <option value="kitchen">⚡ Deterministic Match (kitchen - exact same filters)</option>
+            </optgroup>
+            <optgroup label="━━━ Edge Cases ━━━">
+              <option value="test-low-similarity">❌ Low Similarity - Split (unrelated terms)</option>
+              <option value="test-validator-reject">🚫 Validator Reject (unsafe merge)</option>
+            </optgroup>
           </select>
         </label>
 
@@ -44,102 +50,102 @@
       </div>
     </section>
 
-    <section class="scoreboard" aria-label="Benchmark results">
-      <article class="result-panel raw">
-        <div class="panel-heading">
-          <span class="badge">Baseline</span>
-          <h2>Raw Express</h2>
-        </div>
-        <div class="stat-grid">
-          <div>
-            <span>Time</span>
-            <strong id="rawTime">-</strong>
-          </div>
-          <div>
-            <span>DB calls</span>
-            <strong id="rawCalls">-</strong>
-          </div>
-          <div>
-            <span>Items</span>
-            <strong id="rawItems">-</strong>
-          </div>
-        </div>
-        <div class="bar-track">
-          <div id="rawBar" class="bar"></div>
-        </div>
-      </article>
+    <section class="scoreboard" aria-label="Approach comparison">
+      <div class="comparison-header">
+        <h2>Historical Approaches vs semantic-relay-ai</h2>
+        <p class="scenario-desc">Scenario: 4 users search with synonyms (electronics, gadgets, tech devices, electronic
+          items)</p>
+      </div>
 
-      <article class="result-panel batch">
-        <div class="panel-heading">
-          <span class="badge">Transport</span>
-          <h2>Batch API</h2>
+      <div class="comparison-table">
+        <div class="comparison-row header-row">
+          <div class="col-approach">Approach</div>
+          <div class="col-tech">Technology</div>
+          <div class="col-year">Year</div>
+          <div class="col-synonyms">Detects Synonyms?</div>
+          <div class="col-calls">DB Calls</div>
+          <div class="col-latency">Latency</div>
         </div>
-        <div class="stat-grid">
-          <div>
-            <span>Time</span>
-            <strong id="batchTime">-</strong>
-          </div>
-          <div>
-            <span>DB calls</span>
-            <strong id="batchCalls">-</strong>
-          </div>
-          <div>
-            <span>Saved</span>
-            <strong id="batchSavedCalls">-</strong>
-          </div>
-        </div>
-        <div class="bar-track">
-          <div id="batchBar" class="bar"></div>
-        </div>
-      </article>
 
-      <article class="result-panel semantic-batch">
-        <div class="panel-heading">
-          <span class="badge">Semantic</span>
-          <h2>Semantic Batch</h2>
-        </div>
-        <div class="stat-grid">
-          <div>
-            <span>Time</span>
-            <strong id="semanticBatchTime">-</strong>
+        <div class="comparison-row naive-row">
+          <div class="col-approach">
+            <span class="badge badge-naive">Baseline</span>
+            <strong>Naive Exact Match</strong>
           </div>
-          <div>
-            <span>DB calls</span>
-            <strong id="semanticBatchCalls">-</strong>
-          </div>
-          <div>
-            <span>Saved</span>
-            <strong id="semanticBatchSavedCalls">-</strong>
-          </div>
+          <div class="col-tech">JSON.stringify()</div>
+          <div class="col-year">2010</div>
+          <div class="col-synonyms">❌</div>
+          <div class="col-calls"><strong id="naiveCalls">4</strong></div>
+          <div class="col-latency"><span id="naiveTime">-</span></div>
         </div>
-        <div class="bar-track">
-          <div id="semanticBatchBar" class="bar"></div>
-        </div>
-      </article>
 
-      <article class="result-panel relay">
-        <div class="panel-heading">
-          <span class="badge">Grouped</span>
-          <h2>semantic-relay</h2>
-        </div>
-        <div class="stat-grid">
-          <div>
-            <span>Time</span>
-            <strong id="relayTime">-</strong>
+        <div class="comparison-row dataloader-row">
+          <div class="col-approach">
+            <span class="badge badge-dataloader">Facebook</span>
+            <strong>DataLoader</strong>
           </div>
-          <div>
-            <span>DB calls</span>
-            <strong id="relayCalls">-</strong>
-          </div>
-          <div>
-            <span>Saved</span>
-            <strong id="relaySavedCalls">-</strong>
-          </div>
+          <div class="col-tech">ID batching</div>
+          <div class="col-year">2016</div>
+          <div class="col-synonyms">❌ (filter strings unsupported)</div>
+          <div class="col-calls"><strong>4</strong></div>
+          <div class="col-latency">N/A</div>
         </div>
-        <div class="bar-track">
-          <div id="relayBar" class="bar"></div>
+
+        <div class="comparison-row nginx-row">
+          <div class="col-approach">
+            <span class="badge badge-nginx">Transport</span>
+            <strong>nginx URL Coalescing</strong>
+          </div>
+          <div class="col-tech">Exact URL match</div>
+          <div class="col-year">2010</div>
+          <div class="col-synonyms">❌</div>
+          <div class="col-calls"><strong>4</strong></div>
+          <div class="col-latency">N/A</div>
         </div>
-      </article>
+
+        <div class="comparison-row elastic-row">
+          <div class="col-approach">
+            <span class="badge badge-elastic">Search Layer</span>
+            <strong>Elasticsearch</strong>
+          </div>
+          <div class="col-tech">Query expansion</div>
+          <div class="col-year">2015</div>
+          <div class="col-synonyms">⚠️ (different layer - improves search quality, not load)</div>
+          <div class="col-calls"><strong>1-4</strong></div>
+          <div class="col-latency">N/A</div>
+        </div>
+
+        <div class="comparison-row relay-row highlight-row">
+          <div class="col-approach">
+            <span class="badge badge-relay">AI-Powered</span>
+            <strong>semantic-relay-ai</strong>
+          </div>
+          <div class="col-tech">Cohere v3.0 + Gemini Flash</div>
+          <div class="col-year">2024</div>
+          <div class="col-synonyms">✅</div>
+          <div class="col-calls"><strong id="relayCalls">1</strong></div>
+          <div class="col-latency"><span id="relayTime">-</span></div>
+        </div>
+      </div>
+
+      <div class="comparison-stats">
+        <div class="stat-card">
+          <span>DB Call Reduction</span>
+          <strong id="reductionPercent">75%</strong>
+        </div>
+        <div class="stat-card">
+          <span>Time Saved</span>
+          <strong id="timeSaved">-</strong>
+        </div>
+        <div class="stat-card">
+          <span>AI Cost/Day (10K req)</span>
+          <strong>$0.14</strong>
+        </div>
+        <div class="stat-card">
+          <span>OpenAI Cost (2023)</span>
+          <strong class="expensive">$45</strong>
+        </div>
+      </div>
     </section>
 
     <!-- AI Layer Panel -->
@@ -176,6 +182,36 @@
         </div>
       </div>
 
+      <div class="ai-controls">
+        <label>
+          AI Mode
+          <select id="aiModeSelect">
+            <option value="adaptive">Adaptive (Default - Smart Decision)</option>
+            <option value="deterministic-only">Deterministic Only (No AI)</option>
+            <option value="cohere-only">Cohere Embeddings Only</option>
+            <option value="gemini-reasoning">Gemini Reasoning (Cohere + Gemini)</option>
+            <option value="pattern-cache-test">Pattern Cache Test (Bypass Cache)</option>
+            <option value="disabled">Disabled (No Grouping)</option>
+          </select>
+        </label>
+        <button id="clearCache" type="button">Clear Pattern Cache</button>
+      </div>
+
+      <div class="ai-mode-info">
+        <p><strong>Demo Scenarios - Each Category Triggers Different AI Behavior:</strong></p>
+        <ul>
+          <li><strong>🎯 Electronics (High Confidence):</strong> Cohere similarity ~0.90+ → Skips Gemini (confident
+            match)</li>
+          <li><strong>🤔 Clothing (Ambiguous):</strong> Cohere similarity ~0.70-0.84 → Invokes Gemini reasoning</li>
+          <li><strong>💾 Books (Pattern Cache):</strong> After first run → Uses cached pattern (instant, no AI)</li>
+          <li><strong>⚡ Kitchen (Deterministic):</strong> All filters identical → No AI needed (exact match)</li>
+          <li><strong>❌ Low Similarity:</strong> Completely unrelated terms → Cohere < 0.6 → Immediate split</li>
+          <li><strong>🚫 Validator Reject:</strong> High similarity but unsafe → Validator blocks merge</li>
+        </ul>
+        <p style="margin-top: 12px; padding-top: 12px; border-top: 1px solid #e2e8f0;"><em>Tip: Run "Electronics" twice
+            to see pattern cache in action on the second run!</em></p>
+      </div>
+
       <div class="decision-log-header">
         <h3>Last AI Decisions</h3>
         <div class="button-group">
@@ -193,6 +229,11 @@
         <h2>Run Summary</h2>
         <p id="summaryText">Run the benchmark to compare raw requests, transport batching, semantic batch, and
           transparent semantic-relay.</p>
+        <div id="synonymInfo" class="synonym-info hidden">
+          <h3>Synonym Detection</h3>
+          <p><strong>Variants used:</strong> <span id="synonymList"></span></p>
+          <p><strong>AI detected:</strong> All variants are semantically equivalent synonyms</p>
+        </div>
       </div>
 
       <div class="timeline">

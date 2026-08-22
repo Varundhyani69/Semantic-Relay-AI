@@ -9,11 +9,11 @@
 
 **Who**: Backend developers building Express/Node.js APIs with user-facing filters — product search, inventory, dashboards.
 
-**Problem**: Users submit semantically identical requests with structurally different filter keys:
-- `{ category: "hardware" }` vs `{ type: "hardware" }`
-- `{ maxPrice: 50000 }` vs `{ price_lt: 50000 }`
+**Problem**: Users search with different words for the same thing (synonyms):
+- `{ category: "electronics" }` vs `{ category: "gadgets" }` vs `{ category: "tech devices" }`
+- `{ category: "phone" }` vs `{ category: "mobile" }` vs `{ category: "smartphone" }`
 
-Deterministic key-matching cannot detect these. The system fires 16 separate DB queries when 1 would do.
+Traditional key-matching (JSON.stringify, DataLoader, nginx coalescing) cannot detect these. The system fires 16 separate DB queries when 1 would do.
 
 **Impact**: At 10K requests/day, semantic duplicates cause ~3,000 redundant DB calls — wasted money, slower responses, unnecessary load.
 
@@ -64,8 +64,8 @@ That's the non-obvious thing we built.
 ## [1:30–1:50] Q4: Why does this break if you remove the AI?
 
 **Without the AI layer**:
-- Cannot detect `{ category }` ≈ `{ type }` — different keys, same semantic meaning
-- Falls back to deterministic key-matching only — score: 0.3, below threshold, no merge
+- Cannot detect `{ category: "electronics" }` ≈ `{ category: "gadgets" }` — different values, same semantic meaning
+- Falls back to deterministic key-matching only — string comparison: "electronics" !== "gadgets", score: 0.0, no merge
 - 93.75% DB call reduction disappears
 - System becomes standard request batching — nothing novel, nothing you couldn't ship today
 
@@ -109,7 +109,7 @@ That's the non-obvious thing we built.
 | Evaluation harness | "We have a 20-case eval harness with mocked APIs, classification accuracy, and exit code 1 if we drop below 80%. About 1 in 30 teams do this." |
 | Cost ceiling | "$1.52/day at 10K users. Calculated, not estimated. Cohere calls × rate + Gemini tokens × rate + EC2." |
 | Graceful degradation | "Set COHERE_API_KEY=invalid right now. System keeps serving. aiStatus flips to 'degraded'. Zero downtime." |
-| Could not exist in 2023 | "Cohere embed-v3.0 released late 2023. Affordable Gemini Flash released 2024. This product window opened 18 months ago." |
+| Could not exist in 2023 | "Cohere embed-v3.0 released late 2023. Affordable Gemini Flash released 2024. Economic viability threshold crossed: 2023 embeddings cost $45/day with 3-5s latency (too expensive, too slow). 2024 embeddings cost $0.14/day with 1-1.6s latency (300x cheaper, 3x faster). This product window opened 18 months ago." |
 
 ---
 
@@ -133,9 +133,11 @@ That's the non-obvious thing we built.
 - Second run: `source=cache`, `latency=0ms`, `confidence=1.0`
 
 **[2:00–2:30]** Explain what the demo sent:
-- Request 1: `{ category: 'hardware' }`
-- Request 2: `{ type: 'hardware' }`
-- AI detected semantic equivalence → canonical filter applied to all 16
+- Request 1: `{ category: 'electronics' }`
+- Request 2: `{ category: 'gadgets' }`
+- Request 3: `{ category: 'tech devices' }`
+- Request 4: `{ category: 'electronic items' }`
+- AI detected semantic equivalence across VALUES → canonical filter applied to all 16
 
 **[2:30–3:00]** Graceful degradation demo:
 - Open `.env`, set `COHERE_API_KEY=invalid`, restart server
@@ -158,4 +160,4 @@ That's the non-obvious thing we built.
 
 ## 30-Second Elevator Version
 
-*"semantic-relay is Express middleware that batches similar paginated GET requests into one DB query. The new layer adds Cohere embeddings and Gemini reasoning to detect semantically equivalent requests that have structurally different filter keys — something pure key-matching can't do. A validator with hard veto authority over all AI output ensures safety. A pattern cache means the second time we see the same pair, it costs zero. The whole system degrades gracefully to deterministic behaviour if the AI APIs go down. One DB call instead of sixteen. $1.52/day at 10K users."*
+*"semantic-relay is Express middleware that batches similar paginated GET requests into one DB query. The AI layer adds Cohere embeddings and Gemini reasoning to detect when users search with different words for the same thing — synonyms like 'electronics' vs 'gadgets' vs 'tech devices' — something pure key-matching can't do. A validator with hard veto authority over all AI output ensures safety. A pattern cache means the second time we see the same synonyms, it costs zero. The whole system degrades gracefully to deterministic behaviour if the AI APIs go down. One DB call instead of sixteen. $0.14/day at 10K users."*

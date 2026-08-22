@@ -813,6 +813,27 @@ function semanticRelay(options = {}) {
   // Expose decision log for debugging UI
   middleware.getDecisionLog = () => decisionLog;
 
+  // Expose AI mode control methods
+  middleware.setAiMode = (newMode) => {
+    if (planner && typeof planner.setAiMode === 'function') {
+      planner.setAiMode(newMode);
+    }
+  };
+
+  middleware.getAiMode = () => {
+    if (planner && typeof planner.getAiMode === 'function') {
+      return planner.getAiMode();
+    }
+    return aiMode;
+  };
+
+  // Expose pattern cache clearing
+  middleware.clearPatternCache = () => {
+    if (planner && typeof planner.clearPatternCache === 'function') {
+      planner.clearPatternCache();
+    }
+  };
+
   return middleware;
 }
 

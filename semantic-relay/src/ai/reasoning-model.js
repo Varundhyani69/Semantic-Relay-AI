@@ -1,6 +1,6 @@
 'use strict';
 
-const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
+const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent';
 const DEFAULT_TIMEOUT_MS = 5000;
 
 class ReasoningModel {
@@ -60,26 +60,33 @@ class ReasoningModel {
    * Instructs the model to return ONLY valid JSON.
    */
   _buildPrompt(intentA, intentB, cohereScore) {
-    return `You are an API semantics analyzer. Determine if these two API requests are semantically equivalent.
+    return `You are an API semantics analyzer for an e-commerce product catalog. Determine if these two API requests would return the exact same products (i.e., the filter values are SYNONYMS).
 
 Request A: GET ${intentA.resource} with filters ${JSON.stringify(intentA.filters || {})}
 Request B: GET ${intentB.resource} with filters ${JSON.stringify(intentB.filters || {})}
 Cohere embedding similarity score: ${cohereScore.toFixed(3)}
 
+IMPORTANT: You are checking if filter VALUES are SYNONYMS that query the same data.
+Examples:
+- "electronics" vs "gadgets" → SYNONYMS → equivalent=true, confidence=0.95
+- "clothing" vs "apparel" → SYNONYMS → equivalent=true, confidence=0.90
+- "books" vs "literature" → SYNONYMS → equivalent=true, confidence=0.85
+- "fashion" vs "textiles" → NOT synonyms (different concepts) → equivalent=false, confidence=0.10
+- "electronics" vs "books" → NOT synonyms → equivalent=false, confidence=0.0
+
 Respond with ONLY valid JSON, no markdown, no explanation outside the JSON:
 {
   "equivalent": true or false,
-  "canonicalFilter": { merged filter object if equivalent, null if not equivalent },
+  "canonicalFilter": { use filter from Request A if equivalent, null if not },
   "confidence": number between 0.0 and 1.0,
-  "reason": "one sentence explaining your decision"
+  "reason": "one sentence explaining if these are synonyms or not"
 }
 
-Rules you must follow:
-- Set equivalent=true only if both requests would return the exact same underlying dataset
-- canonicalFilter must only contain keys that already exist in Request A or Request B filters
-- Do not invent new filter keys
-- If filters differ in value (not just key name), set equivalent=false
-- If you are unsure, set equivalent=false with a lower confidence`;
+Rules:
+- Set equivalent=true ONLY if the filter values are TRUE SYNONYMS that would query the same product category
+- If unsure or values are merely related (not synonyms), set equivalent=false
+- canonicalFilter should use the filter structure from Request A when equivalent=true
+- Confidence should reflect how certain you are they are synonyms (0.85-0.95 for clear synonyms)`;
   }
 
   /**

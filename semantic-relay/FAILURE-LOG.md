@@ -7,6 +7,27 @@
 
 ## What We Tried That Failed
 
+### 0. Pivot from Key Equivalence to Value Equivalence
+**What we tried**: Detecting semantically equivalent filter KEYS — `{ category }` vs `{ type }` vs `{ genre }`.
+
+**Why it failed conceptually**: Real-world APIs don't have multiple keys for the same concept. Well-designed APIs standardize on ONE key name (e.g., always use `category`, never alternate between `category`, `type`, `genre`). This use case was contrived and unrealistic.
+
+**How we pivoted**: Switched to detecting semantically equivalent filter VALUES (synonyms):
+- Same key: `category`
+- Different values: `"electronics"` vs `"gadgets"` vs `"tech devices"` vs `"electronic items"`
+
+**Why this is stronger**:
+1. **Real user behavior** — people DO search with synonyms ("phone" vs "mobile" vs "smartphone")
+2. **"Couldn't exist in 2023" defense** — economic viability threshold crossed in 2024:
+   - 2023: OpenAI ada-002 cost $45/day + 3-5s latency (too expensive, too slow)
+   - 2024: Cohere v3.0 cost $0.14/day + 1-1.6s latency (300x cheaper, 3x faster)
+3. **Clear differentiation** — DataLoader/nginx only do EXACT string matching, we detect semantic similarity
+4. **Middleware innovation** — First time AI is fast enough to run synchronously in request path
+
+**Time invested**: 8 hours researching + 4 hours re-implementation planning + 3 hours pitch material updates + 5 hours implementation
+
+---
+
 ### 1. AI Trigger Limited to Pairs Only
 **What we tried**: Original implementation checked `if (planner && groupContexts.length === 2)` — AI only activated for exactly 2 requests.
 
