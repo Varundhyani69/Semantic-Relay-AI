@@ -1,6 +1,6 @@
 # 🎯 semantic-relay-ai Demo Guide
 
-**MAJOR UPDATE**: AI now handles groups of ANY size (2, 4, 8, 16, 100+)!
+**MAJOR UPDATE**: AI now handles groups of ANY size (2, 4, 8, 16, 100+) and uses Gemini 3.6 Flash!
 
 ---
 
@@ -245,6 +245,32 @@ Tested and validated with multiple group sizes:
 
 ## 🔧 Files Changed
 
+### `src/ai/reasoning-model.js`
+Upgraded Gemini model from `gemini-1.5-flash` to `gemini-3.6-flash`:
+```javascript
+// OLD
+const GEMINI_URL = '...models/gemini-1.5-flash:generateContent';
+
+// NEW
+const GEMINI_URL = '...models/gemini-3.6-flash:generateContent';
+```
+
+Also updated `_buildPrompt()` to include synonym examples for better accuracy.
+
+### `src/ai/planner.js`
+Added new AI modes and runtime control:
+```javascript
+// New modes available
+setAiMode('disabled')             // No AI at all
+setAiMode('deterministic-only')   // Same as disabled
+setAiMode('cohere-only')          // Embeddings only, no Gemini
+setAiMode('gemini-reasoning')     // Force Gemini even for confident matches
+setAiMode('adaptive')             // Full pipeline (default)
+setAiMode('pattern-cache-test')   // Cache test mode
+```
+
+Also added `onDecision` callback for demo server wiring.
+
 ### `src/index.js`
 Extended AI trigger logic to handle groups of any size (not just pairs):
 ```javascript
@@ -258,6 +284,12 @@ if (planner && groupContexts.length >= 2) {
   // Apply canonical filter to entire group
 }
 ```
+
+New middleware methods exposed:
+- `middleware.setAiMode(mode)` — change AI mode at runtime
+- `middleware.getAiMode()` — get current mode
+- `middleware.clearPatternCache()` — flush pattern cache
+- `middleware.getDecisionLog()` — get last 100 AI decisions
 
 ### `public/index.html`
 Changed slider minimum from 4 to 2:

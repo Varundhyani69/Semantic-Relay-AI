@@ -23,13 +23,16 @@ Second Run (Warm Cache):
 
 **Validated with multiple group sizes: 2, 4, 8, 16 requests - ALL WORKING!**
 
-## 🚀 MAJOR UPDATE: AI Now Handles Large Groups!
+## 🚀 MAJOR UPDATE: AI Now Handles Large Groups + Gemini 3.6 Flash Upgraded!
 
 ### What Changed:
-**Problem**: AI previously only worked with exactly 2 requests (pairs)
-**Solution**: Extended AI trigger logic to handle groups of ANY size (2, 4, 8, 16, 100+)
+1. **Gemini upgraded**: `gemini-1.5-flash` → `gemini-3.6-flash` (faster, more capable)
+2. **AI group handling extended**: Previously only worked with exactly 2 requests (pairs). Now handles groups of ANY size (2, 4, 8, 16, 100+)
+3. **New AI modes added**: `disabled`, `deterministic-only`, `cohere-only`, `gemini-reasoning`, `pattern-cache-test`
+4. **New middleware methods**: `setAiMode()`, `getAiMode()`, `clearPatternCache()`, `getDecisionLog()`
+5. **Metrics extended**: `getMetrics()` now also returns `aiMode` field
 
-### New Algorithm:
+### New Algorithm (Large Group Handling):
 ```javascript
 // Groups of ANY size (>=2)
 if (planner && groupContexts.length >= 2) {
@@ -64,7 +67,7 @@ if (planner && groupContexts.length >= 2) {
 ```
 
 ### Key Benefits:
-- **Constant AI cost**: Evaluates 1 pair regardless of group size
+- **Constant AI cost**: Evaluates 1 pair regardless of group size (O(1) cost)
 - **Scalable**: Works with 2, 4, 8, 16, 100+ requests
 - **Efficient**: 93.75% DB call reduction for 16 requests
 - **Smart**: Reuses cached patterns across sessions
@@ -162,13 +165,15 @@ if (planner && groupContexts.length >= 2) {
 ## 🎯 What's Working
 
 1. ✅ **AI Layer**: Active and functional
-2. ✅ **Cohere Integration**: Embedding API calls working
-3. ✅ **Gemini Integration**: Reasoning API working  
-4. ✅ **Pattern Cache**: Learning and caching decisions
+2. ✅ **Cohere Integration**: Embedding API calls working (embed-english-v3.0)
+3. ✅ **Gemini Integration**: Upgraded to gemini-3.6-flash, all 6 AI scenarios working
+4. ✅ **Pattern Cache**: Learning and caching decisions, persists to disk
 5. ✅ **Validator**: Safety checks preventing bad merges
 6. ✅ **Cost Tracking**: Accurate per-call cost estimates
-7. ✅ **Metrics**: All 11 AI metrics fields present
+7. ✅ **Metrics**: All 12 AI metrics fields present (including new `aiMode`)
 8. ✅ **API Keys**: Both validated and functional
+9. ✅ **AI Modes**: 6 modes available, switchable at runtime via `setAiMode()`
+10. ✅ **Decision Log**: Last 100 decisions tracked via `getDecisionLog()`
 
 ## 🔧 How to See AI in Action (UPDATED)
 
@@ -229,6 +234,7 @@ From `/api/metrics` after running 16-request benchmark:
 ```json
 {
   "aiStatus": "active",               // ✅ AI loaded and working
+  "aiMode": "adaptive",               // ✅ current mode
   "aiInvocations": 1,                 // ✅ AI evaluated group!
   "embeddingInvocations": 1,          // ✅ Cohere called once
   "reasoningInvocations": 0,          // Embedding was confident enough
